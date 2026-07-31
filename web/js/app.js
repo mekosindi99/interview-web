@@ -386,9 +386,12 @@ function statusLabel(c) {
 }
 
 function renderCandidatesTab() {
+  const showRemoved = !!state.showRemovedCandidates;
+  const visible = state.candidates.filter((c) => showRemoved ? c.deleted : !c.deleted);
   const wrap = el(`
     <div>
       <button id="new-cand-btn" class="primary">${L("createCandidate")}</button>
+      <button id="toggle-removed-btn" class="ghost">${showRemoved ? L("candidates") : L("removedCandidates")}</button>
       <div id="new-cand-form"></div>
       <table class="grid">
         <thead><tr>
@@ -404,8 +407,9 @@ function renderCandidatesTab() {
     formHost.innerHTML = "";
     formHost.appendChild(renderNewCandidateForm());
   };
+  wrap.querySelector("#toggle-removed-btn").onclick = () => setState({ showRemovedCandidates: !showRemoved });
   const rows = wrap.querySelector("#cand-rows");
-  state.candidates.forEach((c) => {
+  visible.forEach((c) => {
     const att = state.attempts[c.id];
     const tr = el(`
       <tr>
@@ -417,6 +421,21 @@ function renderCandidatesTab() {
       </tr>
     `);
     const actions = tr.querySelector(".row-actions");
+    if (c.deleted) {
+      // Removed candidates only get restored — we never hard-delete the
+      // Firestore profile anymore, since the underlying Auth login can't be
+      // deleted from the client, and re-registering the same phone number
+      // against a hard-deleted profile always fails with
+      // auth/email-already-in-use. Restoring the same doc sidesteps that.
+      const restoreBtn = el(`<button class="link">${L("restore")}</button>`);
+      restoreBtn.onclick = async () => {
+        await updateDoc(doc(db, "users", c.id), { deleted: false });
+        try { await unblacklistFingerprint(c); } catch (err) { console.warn("fingerprint unblock failed", err); }
+      };
+      actions.appendChild(restoreBtn);
+      rows.appendChild(tr);
+      return;
+    }
     if (["submitted", "graded"].includes(c.examStatus)) {
       const btn = el(`<button class="link">${L("viewResult")}</button>`);
       btn.onclick = () => setState({ adminTab: "candidates", viewCandidate: c.id });
@@ -434,7 +453,8 @@ function renderCandidatesTab() {
       delBtn.onclick = async () => {
         if (!confirm(L("delete") + "?")) return;
         try { await blacklistFingerprint(c); } catch (err) { console.warn("fingerprint blacklist write failed", err); }
-        await deleteDoc(doc(db, "users", c.id));
+        // Soft delete only — see comment above on why we never hard-delete.
+        await updateDoc(doc(db, "users", c.id), { deleted: true });
       };
       actions.appendChild(delBtn);
     }
@@ -490,11 +510,30 @@ function renderNewCandidateForm() {
     const code = f.get("code");
     if (!isPhone(phone)) { errBox.textContent = L("invalidPhone"); return; }
     try {
+      // Check for an existing profile with this phone first — a hard delete
+      // is no longer possible (see renderCandidatesTab), so if a profile
+      // already exists the fix is to restore it, not to try creating a
+      // duplicate login that Firebase will reject anyway.
+      const existing = await getDocs(query(collection(db, "users"), where("phone", "==", phone)));
+      if (!existing.empty) {
+        const ex = { id: existing.docs[0].id, ...existing.docs[0].data() };
+        if (ex.deleted) {
+          errBox.innerHTML = `${L("phoneExistsRemoved")} <button type="button" id="restore-inline" class="link">${L("restore")}</button>`;
+          wrap.querySelector("#restore-inline").onclick = async () => {
+            await updateDoc(doc(db, "users", ex.id), { deleted: false, name: f.get("name") });
+            try { await unblacklistFingerprint(ex); } catch {}
+            setState({ showRemovedCandidates: false });
+          };
+        } else {
+          errBox.textContent = L("phoneExists");
+        }
+        return;
+      }
       const secApp = getSecondaryApp();
       const secAuth = getAuth(secApp);
       const cred = await createUserWithEmailAndPassword(secAuth, phoneToEmail(phone), code);
       await setDoc(doc(db, "users", cred.user.uid), {
-        role: "candidate", name: f.get("name"), phone,
+        role: "candidate", name: f.get("name"), phone, deleted: false,
         examStatus: "not_started", blocked: false,
         createdAt: serverTimestamp(), createdBy: state.user.uid,
       });
@@ -504,7 +543,11 @@ function renderNewCandidateForm() {
       `;
       e.target.reset();
     } catch (err) {
-      errBox.textContent = err.message;
+      if (err.code === "auth/email-already-in-use") {
+        errBox.textContent = L("phoneOrphaned");
+      } else {
+        errBox.textContent = err.message;
+      }
     }
   };
   return wrap;
@@ -781,7 +824,7 @@ let examLocalAnswers = {};
 let examQIndex = 0;
 
 function renderExam() {
-  if (state.profile.blocked) {
+  if (state.profile.blocked || state.profile.deleted) {
     return el(`<div class="card center-card"><p>${L("blocked")}</p></div>`);
   }
   if (["submitted", "graded"].includes(state.profile.examStatus)) {

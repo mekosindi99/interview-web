@@ -102,6 +102,11 @@ export const t = {
     invalidPhone: "رقم الموبايل يجب أن يكون 11 خانة بالضبط",
     loginBlockedMsg: "هذا الجهاز/الشبكة محظور من الدخول.",
     showPassword: "إظهار/إخفاء كلمة المرور",
+    removedCandidates: "المحذوفون",
+    restore: "استرجاع",
+    phoneExists: "هذا الرقم مسجّل مسبقاً بحساب فعّال.",
+    phoneExistsRemoved: "هذا الرقم مسجّل بحساب محذوف مسبقاً — استرجعه بدل إنشاء حساب جديد:",
+    phoneOrphaned: "تعذّر إنشاء الحساب: هذا الرقم مستخدم بحساب دخول قديم لا يمكن حذفه من الموقع مباشرة. راجع Firebase Console → Authentication واحذف الحساب المطابق لهذا الرقم يدوياً، ثم أعد المحاولة.",
   },
   ku: {
     appName: "مقابلة",
@@ -194,6 +199,11 @@ export const t = {
     invalidPhone: "ژمارا مۆبایلێ دڤێت 11 خانە بن",
     loginBlockedMsg: "ئەڤ ئامیر/تۆڕ ژ چوونەژوورێ هاتیە بلۆککرن.",
     showPassword: "نیشاندان/ڤەشارتنا دەستووری",
+    removedCandidates: "یێت هاتینە ژێبرن",
+    restore: "ڤەگەراندن",
+    phoneExists: "ئەڤ ژمارە بەری نوکە ب هژمارەکا چالاک تۆمار بویه.",
+    phoneExistsRemoved: "ئەڤ ژمارە ب هژمارەکا هاتیە ژێبرن تۆمار بویه — ڤەگەرینە دەرامەت ژ چێکرنا هژمارەکا نوی:",
+    phoneOrphaned: "نەشیا هژمار چێبیت: ئەڤ ژمارە ب هژمارەکا چوونەژوورێ کۆن هاتیە بکارئینان یا نەشێت ژ ماڵپەری ژێببیت. بضە Firebase Console → Authentication و هژمارا لدژی ڤێ ژمارێ ب دەستی ژێببە، پاشی دووبارە هەولبدە.",
   },
   en: {
     appName: "Interview",
@@ -286,6 +296,11 @@ export const t = {
     invalidPhone: "Phone number must be exactly 11 digits",
     loginBlockedMsg: "This device/network is blocked from signing in.",
     showPassword: "Show/hide password",
+    removedCandidates: "Removed",
+    restore: "Restore",
+    phoneExists: "This phone number is already registered on an active account.",
+    phoneExistsRemoved: "This phone number belongs to a removed account — restore it instead of creating a new one:",
+    phoneOrphaned: "Couldn't create the account: this phone number is tied to an old login that can't be deleted from the website directly. Go to Firebase Console → Authentication and manually delete the matching account, then try again.",
   },
 };
 

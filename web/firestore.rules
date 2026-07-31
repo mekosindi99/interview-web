@@ -19,10 +19,11 @@ service cloud.firestore {
 
     match /users/{uid} {
       allow read: if isSignedIn() && (request.auth.uid == uid || isStaff());
-      // Candidates may only update their own exam-progress fields, never role/blocked/score.
+      // Candidates may only update their own exam-progress fields, never role/blocked/deleted/score.
       allow update: if isSignedIn() && request.auth.uid == uid
         && request.resource.data.role == resource.data.role
         && request.resource.data.blocked == resource.data.blocked
+        && request.resource.data.deleted == resource.data.deleted
         && !("score" in request.resource.data.diff(resource.data).affectedKeys());
       allow update, delete: if isAdmin();
       allow update: if isSignedIn() && role() == 'coadmin' && resource.data.role == 'candidate';
