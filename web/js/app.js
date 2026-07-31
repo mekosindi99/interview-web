@@ -227,30 +227,19 @@ const KURD_FLAG_SVG = `<svg viewBox="0 0 30 20" class="flag-svg"><rect width="30
 const LANG_FLAG = { ar: "🇮🇶", ku: KURD_FLAG_SVG, en: "🇺🇸" };
 function flagHtml(l) { return l === "ku" ? KURD_FLAG_SVG : `<span class="flag-emoji">${LANG_FLAG[l]}</span>`; }
 
+// Always-visible row of flag buttons — no dropdown to open/close, so the
+// choices stay on screen at all times (per explicit request).
 function langSwitcher() {
-  const wrap = el(`
-    <div class="lang-dd">
-      <button class="lang-dd-btn" id="lang-dd-btn" type="button" aria-label="${L("changeLang")}">
-        ${flagHtml(state.lang)}
-      </button>
-      <div class="lang-dd-menu" id="lang-dd-menu" hidden></div>
-    </div>
-  `);
-  const menu = wrap.querySelector("#lang-dd-menu");
+  const wrap = el(`<div class="lang-row"></div>`);
   LANGS.forEach((l) => {
-    const item = el(`
-      <button type="button" class="lang-dd-item ${l === state.lang ? "active" : ""}">
+    const b = el(`
+      <button type="button" class="lang-flag-btn ${l === state.lang ? "active" : ""}" aria-label="${LANG_NAME[l]}" title="${LANG_NAME[l]}">
         ${flagHtml(l)}
-        <span>${LANG_NAME[l]}</span>
-        <span class="lang-dd-check">${l === state.lang ? "✔" : ""}</span>
       </button>
     `);
-    item.onclick = () => { localStorage.setItem("lang", l); setState({ lang: l }); };
-    menu.appendChild(item);
+    b.onclick = () => { localStorage.setItem("lang", l); setState({ lang: l }); };
+    wrap.appendChild(b);
   });
-  const btn = wrap.querySelector("#lang-dd-btn");
-  btn.onclick = (e) => { e.stopPropagation(); menu.hidden = !menu.hidden; };
-  document.addEventListener("click", () => { menu.hidden = true; }, { once: true });
   return wrap;
 }
 
