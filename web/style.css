@@ -89,6 +89,7 @@ table.grid { width: 100%; border-collapse: collapse; background: var(--card); bo
 table.grid th, table.grid td { padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 14px; text-align: start; }
 table.grid th { background: #fafafa; color: var(--muted); font-weight: 600; }
 .row-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+table.grid .mono { font-family: "Courier New", monospace; letter-spacing: .5px; }
 
 .q-list { display: flex; flex-direction: column; gap: 10px; }
 .q-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }

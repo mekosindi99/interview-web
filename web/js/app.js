@@ -417,7 +417,7 @@ function renderCandidatesTab() {
       <div id="new-cand-form"></div>
       <table class="grid">
         <thead><tr>
-          <th>${L("name")}</th><th>${L("phone")}</th>
+          <th>${L("name")}</th><th>${L("phone")}</th><th>${L("password")}</th>
           <th>${L("status")}</th><th>${L("score")}</th><th></th>
         </tr></thead>
         <tbody id="cand-rows"></tbody>
@@ -437,6 +437,7 @@ function renderCandidatesTab() {
       <tr>
         <td>${escapeHtml(c.name)}</td>
         <td>${escapeHtml(c.phone || "")}</td>
+        <td class="mono">${escapeHtml(c.code || "—")}</td>
         <td>${statusLabel(c)}</td>
         <td>${att ? `${att.score}/${att.totalPoints}` : "—"}</td>
         <td class="row-actions"></td>
@@ -557,7 +558,11 @@ function renderNewCandidateForm() {
       const secAuth = getAuth(secApp);
       const cred = await createUserWithEmailAndPassword(secAuth, phoneToEmail(phone), code);
       await setDoc(doc(db, "users", cred.user.uid), {
-        role: "candidate", name: f.get("name"), phone, deleted: false,
+        // Storing the login code in plain text is a deliberate tradeoff:
+        // staff need to be able to look it up again to resend it to a
+        // candidate, and this code is a throwaway access code (not reused
+        // elsewhere), not a real password. Only staff can read it (rules).
+        role: "candidate", name: f.get("name"), phone, code, deleted: false,
         examStatus: "not_started", blocked: false,
         createdAt: serverTimestamp(), createdBy: state.user.uid,
       });
@@ -584,8 +589,8 @@ function renderCoadminsTab() {
       <button id="new-coadmin-btn" class="primary">${L("addCoadmin")}</button>
       <div id="new-coadmin-form"></div>
       <table class="grid">
-        <thead><tr><th>${L("name")}</th><th>${L("phone")}</th><th></th></tr></thead>
-        <tbody id="coadmin-rows"><tr><td colspan="3">${L("loading")}</td></tr></tbody>
+        <thead><tr><th>${L("name")}</th><th>${L("phone")}</th><th>${L("password")}</th><th></th></tr></thead>
+        <tbody id="coadmin-rows"><tr><td colspan="4">${L("loading")}</td></tr></tbody>
       </table>
     </div>
   `);
@@ -597,10 +602,10 @@ function renderCoadminsTab() {
   getDocs(query(collection(db, "users"), where("role", "==", "coadmin"))).then((snap) => {
     const rows = wrap.querySelector("#coadmin-rows");
     rows.innerHTML = "";
-    if (snap.empty) { rows.innerHTML = `<tr><td colspan="3">—</td></tr>`; return; }
+    if (snap.empty) { rows.innerHTML = `<tr><td colspan="4">—</td></tr>`; return; }
     snap.forEach((d) => {
       const c = { id: d.id, ...d.data() };
-      const tr = el(`<tr><td>${escapeHtml(c.name)}</td><td>${escapeHtml(c.phone || "")}</td><td></td></tr>`);
+      const tr = el(`<tr><td>${escapeHtml(c.name)}</td><td>${escapeHtml(c.phone || "")}</td><td class="mono">${escapeHtml(c.code || "—")}</td><td></td></tr>`);
       const delBtn = el(`<button class="link danger">${L("remove")}</button>`);
       delBtn.onclick = () => { if (confirm(L("remove") + "?")) deleteDoc(doc(db, "users", c.id)); };
       tr.lastElementChild.appendChild(delBtn);
@@ -634,7 +639,7 @@ function renderNewCoadminForm() {
       const secAuth = getAuth(secApp);
       const cred = await createUserWithEmailAndPassword(secAuth, phoneToEmail(phone), f.get("code"));
       await setDoc(doc(db, "users", cred.user.uid), {
-        role: "coadmin", name: f.get("name"), phone,
+        role: "coadmin", name: f.get("name"), phone, code: f.get("code"),
         createdAt: serverTimestamp(), createdBy: state.user.uid,
       });
       await signOut(secAuth);
