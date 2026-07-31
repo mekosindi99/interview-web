@@ -5,7 +5,7 @@ import { seedQuestions, CATEGORIES } from "./questions.js";
 import { initializeApp, getApp, getApps } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import {
   getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut,
-  createUserWithEmailAndPassword,
+  createUserWithEmailAndPassword, setPersistence, browserLocalPersistence,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import {
   getFirestore, doc, getDoc, setDoc, updateDoc, addDoc, deleteDoc,
@@ -15,6 +15,10 @@ import {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
+// Explicit local persistence: keep the session in this browser across tab
+// closes / restarts, so the login screen isn't shown again on the same
+// device until the user explicitly signs out.
+setPersistence(auth, browserLocalPersistence).catch(() => {});
 
 // Secondary app instance so the admin can create candidate accounts
 // without Firebase Auth switching the admin's own session to the new user.
@@ -289,6 +293,7 @@ function renderAdminSetup() {
 function renderLogin() {
   const wrap = el(`
     <div class="card center-card">
+      <img class="brand-logo" src="assets/brand/logo.svg" alt="${L("appName")}" />
       <h1>${L("appName")}</h1>
       <h2>${L("loginTitle")}</h2>
       ${state.loginBlocked ? `<div class="err">${L("loginBlockedMsg")}</div>` : ""}
