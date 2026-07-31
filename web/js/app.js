@@ -606,9 +606,16 @@ function renderCoadminsTab() {
     snap.forEach((d) => {
       const c = { id: d.id, ...d.data() };
       const tr = el(`<tr><td>${escapeHtml(c.name)}</td><td>${escapeHtml(c.phone || "")}</td><td class="mono">${escapeHtml(c.code || "—")}</td><td></td></tr>`);
-      const delBtn = el(`<button class="link danger">${L("remove")}</button>`);
-      delBtn.onclick = () => { if (confirm(L("remove") + "?")) deleteDoc(doc(db, "users", c.id)); };
-      tr.lastElementChild.appendChild(delBtn);
+      if (ADMIN_SERVER_URL) {
+        // Same fix as candidates: a plain Firestore delete would leave an
+        // orphaned Auth login behind (see makeHardDeleteBtn). Removing a
+        // co-admin should mean actually gone, so this always hard-deletes.
+        tr.lastElementChild.appendChild(makeHardDeleteBtn(c));
+      } else {
+        const delBtn = el(`<button class="link danger" title="${L("hardDeleteUnavailable")}">${L("remove")}</button>`);
+        delBtn.onclick = () => alert(L("hardDeleteUnavailable"));
+        tr.lastElementChild.appendChild(delBtn);
+      }
       rows.appendChild(tr);
     });
   });

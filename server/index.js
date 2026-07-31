@@ -71,5 +71,29 @@ app.delete("/users/:uid", requireAdmin, async (req, res) => {
   }
 });
 
+// Cleanup escape hatch: deletes an Auth login by phone number even if its
+// Firestore profile is already gone (e.g. deleted by an older buggy client
+// flow before this server existed). Not used by the main site UI — for
+// manual cleanup only.
+app.delete("/by-phone/:phone", requireAdmin, async (req, res) => {
+  const email = `${req.params.phone}@phone.interview.local`;
+  try {
+    let uid;
+    try {
+      uid = (await auth.getUserByEmail(email)).uid;
+    } catch (err) {
+      if (err.code === "auth/user-not-found") return res.status(404).json({ error: "no auth account for this phone" });
+      throw err;
+    }
+    await auth.deleteUser(uid);
+    await db.collection("users").doc(uid).delete().catch(() => {});
+    await db.collection("attempts").doc(uid).delete().catch(() => {});
+    res.json({ ok: true, uid });
+  } catch (err) {
+    console.error("delete-by-phone failed", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`interview-admin-server listening on ${port}`));

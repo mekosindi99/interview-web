@@ -109,6 +109,7 @@ export const t = {
     phoneOrphaned: "تعذّر إنشاء الحساب: هذا الرقم مستخدم بحساب دخول قديم لا يمكن حذفه من الموقع مباشرة. راجع Firebase Console → Authentication واحذف الحساب المطابق لهذا الرقم يدوياً، ثم أعد المحاولة.",
     hardDelete: "حذف نهائي",
     hardDeleteConfirm: "حذف نهائي كامل (يحرّر رقم الموبايل للاستخدام من جديد) — لا يمكن التراجع. متأكد؟",
+    hardDeleteUnavailable: "الحذف الفعلي يحتاج سيرفر الأدمن (server/) — أضف رابطه بـ firebase-config.js أولاً.",
   },
   ku: {
     appName: "مقابلة",
@@ -206,6 +207,9 @@ export const t = {
     phoneExists: "ئەڤ ژمارە بەری نوکە ب هژمارەکا چالاک تۆمار بویه.",
     phoneExistsRemoved: "ئەڤ ژمارە ب هژمارەکا هاتیە ژێبرن تۆمار بویه — ڤەگەرینە دەرامەت ژ چێکرنا هژمارەکا نوی:",
     phoneOrphaned: "نەشیا هژمار چێبیت: ئەڤ ژمارە ب هژمارەکا چوونەژوورێ کۆن هاتیە بکارئینان یا نەشێت ژ ماڵپەری ژێببیت. بضە Firebase Console → Authentication و هژمارا لدژی ڤێ ژمارێ ب دەستی ژێببە، پاشی دووبارە هەولبدە.",
+    hardDelete: "ژێبرنا دویماهیک",
+    hardDeleteConfirm: "ژێبرنا دویماهیک یا تەواو (ژمارا مۆبایلێ ڤەدبیت بو بکارئینانەکا نوی) — ناشێت ڤەگەریت. پشتراستی؟",
+    hardDeleteUnavailable: "ژێبرنا راستەقینە پێویستی ب سیرڤەرێ ئەدمینێ هەیه (server/) — پێش هەمی چێبکە.",
   },
   en: {
     appName: "Interview",
@@ -303,6 +307,9 @@ export const t = {
     phoneExists: "This phone number is already registered on an active account.",
     phoneExistsRemoved: "This phone number belongs to a removed account — restore it instead of creating a new one:",
     phoneOrphaned: "Couldn't create the account: this phone number is tied to an old login that can't be deleted from the website directly. Go to Firebase Console → Authentication and manually delete the matching account, then try again.",
+    hardDelete: "Permanent delete",
+    hardDeleteConfirm: "Fully permanent delete (frees the phone number for reuse) — cannot be undone. Are you sure?",
+    hardDeleteUnavailable: "Actually deleting requires the admin server (server/) — add its URL to firebase-config.js first.",
   },
 };
 
