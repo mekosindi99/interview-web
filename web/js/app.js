@@ -196,6 +196,28 @@ function escapeHtml(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+// Password field with a show/hide "eye" toggle so the user can verify what
+// they typed before submitting. Renders the markup; call wirePwToggles(root)
+// once after inserting it into the DOM to wire up the toggle buttons.
+function pwField(name, attrs = "") {
+  return `
+    <div class="pw-wrap">
+      <input type="password" name="${name}" ${attrs} />
+      <button type="button" class="pw-eye" data-for="${name}" aria-label="${L("showPassword")}">👁</button>
+    </div>
+  `;
+}
+function wirePwToggles(root) {
+  root.querySelectorAll(".pw-eye").forEach((btn) => {
+    btn.onclick = () => {
+      const input = btn.previousElementSibling;
+      const showing = input.type === "text";
+      input.type = showing ? "password" : "text";
+      btn.textContent = showing ? "👁" : "🙈";
+    };
+  });
+}
+
 // ============================================================
 // RENDER
 // ============================================================
@@ -251,13 +273,14 @@ function renderAdminSetup() {
       <form id="setup-form">
         <label>${L("name")}<input required name="name" /></label>
         <label>${L("email")}<input required type="email" name="email" /></label>
-        <label>${L("password")}<input required type="password" name="password" minlength="6" /></label>
-        <label>${L("setupKey")}<input required type="password" name="key" /></label>
+        <label>${L("password")}${pwField("password", 'required minlength="6"')}</label>
+        <label>${L("setupKey")}${pwField("key", "required")}</label>
         <div class="err" id="setup-err"></div>
         <button type="submit">${L("setupBtn")}</button>
       </form>
     </div>
   `);
+  wirePwToggles(wrap);
   wrap.querySelector("#setup-form").onsubmit = async (e) => {
     e.preventDefault();
     const f = new FormData(e.target);
@@ -301,12 +324,13 @@ function renderLogin() {
           <input required name="identifier" autocomplete="username" placeholder="you@email.com — or — 07701234567" />
         </label>
         <p class="hint">${L("phoneLoginHint")}</p>
-        <label>${L("password")}<input required type="password" name="password" autocomplete="current-password" /></label>
+        <label>${L("password")}${pwField("password", 'required autocomplete="current-password"')}</label>
         <div class="err" id="login-err"></div>
         <button type="submit">${L("loginBtn")}</button>
       </form>
     </div>
   `);
+  wirePwToggles(wrap);
   wrap.querySelector("#login-form").onsubmit = async (e) => {
     e.preventDefault();
     const f = new FormData(e.target);

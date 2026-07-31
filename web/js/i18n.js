@@ -101,6 +101,7 @@ export const t = {
     phoneLoginHint: "استخدم رقم الموبايل (11 خانة) لتسجيل الدخول",
     invalidPhone: "رقم الموبايل يجب أن يكون 11 خانة بالضبط",
     loginBlockedMsg: "هذا الجهاز/الشبكة محظور من الدخول.",
+    showPassword: "إظهار/إخفاء كلمة المرور",
   },
   ku: {
     appName: "مقابلة",
@@ -192,6 +193,7 @@ export const t = {
     phoneLoginHint: "ژمارا مۆبایلێ (11 خانە) بکاربینە بو چوونەژوور",
     invalidPhone: "ژمارا مۆبایلێ دڤێت 11 خانە بن",
     loginBlockedMsg: "ئەڤ ئامیر/تۆڕ ژ چوونەژوورێ هاتیە بلۆککرن.",
+    showPassword: "نیشاندان/ڤەشارتنا دەستووری",
   },
   en: {
     appName: "Interview",
@@ -283,6 +285,7 @@ export const t = {
     phoneLoginHint: "Use your 11-digit phone number to sign in",
     invalidPhone: "Phone number must be exactly 11 digits",
     loginBlockedMsg: "This device/network is blocked from signing in.",
+    showPassword: "Show/hide password",
   },
 };
 
