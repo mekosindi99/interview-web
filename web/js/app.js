@@ -61,6 +61,20 @@ onAuthStateChanged(auth, async (user) => {
     return;
   }
   const profile = { id: user.uid, ...snap.data() };
+  if (profile.role === "candidate" || profile.role === "coadmin") {
+    if (await isFingerprintBlocked()) {
+      await signOut(auth);
+      setState({ user: null, profile: null, route: "login", loginBlocked: true });
+      return;
+    }
+  }
+  if (profile.role === "candidate") {
+    const deviceId = getDeviceId();
+    const ip = await getClientIp();
+    if (deviceId !== profile.deviceId || (ip && ip !== profile.ip)) {
+      updateDoc(doc(db, "users", user.uid), { deviceId, ...(ip ? { ip } : {}) }).catch(() => {});
+    }
+  }
   setState({
     user,
     profile,
@@ -117,6 +131,63 @@ function stopStaffWatchers() {
 }
 
 // ---------- Helpers ----------
+// Firebase Auth needs an email under the hood; candidates/co-admins log in
+// with an 11-digit phone number instead, so we map phone -> a synthetic
+// email address that never leaves the client.
+const PHONE_DOMAIN = "phone.interview.local";
+function phoneToEmail(phone) { return `${phone}@${PHONE_DOMAIN}`; }
+function isPhone(v) { return /^\d{11}$/.test(v); }
+
+// ---------- Device/IP fingerprint (best-effort abuse deterrent) ----------
+// NOT a real security boundary: a determined user can clear localStorage or
+// change IP (VPN/mobile data) to route around this. It only stops the common
+// case of someone re-registering with the same phone/browser after a block.
+function getDeviceId() {
+  let id = localStorage.getItem("device_id");
+  if (!id) {
+    id = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    localStorage.setItem("device_id", id);
+  }
+  return id;
+}
+async function getClientIp() {
+  try {
+    const res = await fetch("https://api.ipify.org?format=json");
+    const data = await res.json();
+    return data.ip || null;
+  } catch {
+    return null;
+  }
+}
+async function isFingerprintBlocked() {
+  try {
+    const deviceId = getDeviceId();
+    const ip = await getClientIp();
+    const checks = [getDoc(doc(db, "blockedDevices", deviceId))];
+    if (ip) checks.push(getDoc(doc(db, "blockedIPs", ip)));
+    const snaps = await Promise.all(checks);
+    return snaps.some((s) => s.exists());
+  } catch (err) {
+    // Fail-open: this is a deterrent, not the primary access control (the
+    // per-account "blocked" flag is), so a rules/network hiccup here must
+    // never lock every candidate out of the exam.
+    console.warn("fingerprint check failed, allowing sign-in", err);
+    return false;
+  }
+}
+async function blacklistFingerprint(c) {
+  const writes = [];
+  if (c.deviceId) writes.push(setDoc(doc(db, "blockedDevices", c.deviceId), { blockedAt: serverTimestamp(), fromUid: c.id }));
+  if (c.ip) writes.push(setDoc(doc(db, "blockedIPs", c.ip), { blockedAt: serverTimestamp(), fromUid: c.id }));
+  await Promise.all(writes);
+}
+async function unblacklistFingerprint(c) {
+  const writes = [];
+  if (c.deviceId) writes.push(deleteDoc(doc(db, "blockedDevices", c.deviceId)).catch(() => {}));
+  if (c.ip) writes.push(deleteDoc(doc(db, "blockedIPs", c.ip)).catch(() => {}));
+  await Promise.all(writes);
+}
+
 function genCode(len = 6) {
   const chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
   let s = "";
@@ -212,13 +283,20 @@ function renderAdminSetup() {
 }
 
 // ---------- Login ----------
+// Admin signs in with a real email; candidates & co-admins sign in with an
+// 11-digit phone number instead (mapped to a synthetic email under the hood
+// via phoneToEmail — see the Helpers section).
 function renderLogin() {
   const wrap = el(`
     <div class="card center-card">
       <h1>${L("appName")}</h1>
       <h2>${L("loginTitle")}</h2>
+      ${state.loginBlocked ? `<div class="err">${L("loginBlockedMsg")}</div>` : ""}
       <form id="login-form">
-        <label>${L("email")}<input required type="email" name="email" autocomplete="username" /></label>
+        <label>${L("email")} / ${L("phone")}
+          <input required name="identifier" autocomplete="username" placeholder="you@email.com — or — 07701234567" />
+        </label>
+        <p class="hint">${L("phoneLoginHint")}</p>
         <label>${L("password")}<input required type="password" name="password" autocomplete="current-password" /></label>
         <div class="err" id="login-err"></div>
         <button type="submit">${L("loginBtn")}</button>
@@ -230,8 +308,10 @@ function renderLogin() {
     const f = new FormData(e.target);
     const errBox = wrap.querySelector("#login-err");
     errBox.textContent = "";
+    const raw = String(f.get("identifier")).trim();
+    const email = raw.includes("@") ? raw : phoneToEmail(raw);
     try {
-      await signInWithEmailAndPassword(auth, f.get("email"), f.get("password"));
+      await signInWithEmailAndPassword(auth, email, f.get("password"));
     } catch (err) {
       errBox.textContent = L("loginError");
     }
@@ -284,7 +364,7 @@ function renderCandidatesTab() {
       <div id="new-cand-form"></div>
       <table class="grid">
         <thead><tr>
-          <th>${L("name")}</th><th>${L("email")}</th><th>${L("phone")}</th>
+          <th>${L("name")}</th><th>${L("phone")}</th>
           <th>${L("status")}</th><th>${L("score")}</th><th></th>
         </tr></thead>
         <tbody id="cand-rows"></tbody>
@@ -302,7 +382,6 @@ function renderCandidatesTab() {
     const tr = el(`
       <tr>
         <td>${escapeHtml(c.name)}</td>
-        <td>${escapeHtml(c.email)}</td>
         <td>${escapeHtml(c.phone || "")}</td>
         <td>${statusLabel(c)}</td>
         <td>${att ? `${att.score}/${att.totalPoints}` : "—"}</td>
@@ -316,11 +395,19 @@ function renderCandidatesTab() {
       actions.appendChild(btn);
     }
     const blockBtn = el(`<button class="link warn">${c.blocked ? L("unblock") : L("block")}</button>`);
-    blockBtn.onclick = () => updateDoc(doc(db, "users", c.id), { blocked: !c.blocked });
+    blockBtn.onclick = async () => {
+      const blocking = !c.blocked;
+      await updateDoc(doc(db, "users", c.id), { blocked: blocking });
+      try { if (blocking) await blacklistFingerprint(c); else await unblacklistFingerprint(c); } catch (err) { console.warn("fingerprint blacklist write failed", err); }
+    };
     actions.appendChild(blockBtn);
     if (state.profile.role === "admin") {
       const delBtn = el(`<button class="link danger">${L("delete")}</button>`);
-      delBtn.onclick = () => { if (confirm(L("delete") + "?")) deleteDoc(doc(db, "users", c.id)); };
+      delBtn.onclick = async () => {
+        if (!confirm(L("delete") + "?")) return;
+        try { await blacklistFingerprint(c); } catch (err) { console.warn("fingerprint blacklist write failed", err); }
+        await deleteDoc(doc(db, "users", c.id));
+      };
       actions.appendChild(delBtn);
     }
     rows.appendChild(tr);
@@ -356,8 +443,8 @@ function renderNewCandidateForm() {
   const wrap = el(`
     <form id="cand-form" class="card">
       <label>${L("name")}<input required name="name" /></label>
-      <label>${L("email")}<input required type="email" name="email" /></label>
-      <label>${L("phone")}<input name="phone" /></label>
+      <label>${L("phone")}<input required name="phone" inputmode="numeric" maxlength="11" pattern="\\d{11}" placeholder="07701234567" /></label>
+      <p class="hint">${L("invalidPhone")}</p>
       <label>${L("password")}<input name="code" value="${genCode()}" /></label>
       <div class="err" id="cand-err"></div>
       <div class="row-actions">
@@ -371,20 +458,21 @@ function renderNewCandidateForm() {
     const f = new FormData(e.target);
     const errBox = wrap.querySelector("#cand-err");
     errBox.textContent = "";
-    const email = f.get("email");
+    const phone = String(f.get("phone")).trim();
     const code = f.get("code");
+    if (!isPhone(phone)) { errBox.textContent = L("invalidPhone"); return; }
     try {
       const secApp = getSecondaryApp();
       const secAuth = getAuth(secApp);
-      const cred = await createUserWithEmailAndPassword(secAuth, email, code);
+      const cred = await createUserWithEmailAndPassword(secAuth, phoneToEmail(phone), code);
       await setDoc(doc(db, "users", cred.user.uid), {
-        role: "candidate", name: f.get("name"), email, phone: f.get("phone") || "",
+        role: "candidate", name: f.get("name"), phone,
         examStatus: "not_started", blocked: false,
         createdAt: serverTimestamp(), createdBy: state.user.uid,
       });
       await signOut(secAuth);
       wrap.querySelector("#cand-result").innerHTML = `
-        <div class="notice">${L("accountCreated")}<br><b>${escapeHtml(email)}</b> / <b>${escapeHtml(code)}</b></div>
+        <div class="notice">${L("accountCreated")}<br><b>${escapeHtml(phone)}</b> / <b>${escapeHtml(code)}</b></div>
       `;
       e.target.reset();
     } catch (err) {
@@ -401,7 +489,7 @@ function renderCoadminsTab() {
       <button id="new-coadmin-btn" class="primary">${L("addCoadmin")}</button>
       <div id="new-coadmin-form"></div>
       <table class="grid">
-        <thead><tr><th>${L("name")}</th><th>${L("email")}</th><th></th></tr></thead>
+        <thead><tr><th>${L("name")}</th><th>${L("phone")}</th><th></th></tr></thead>
         <tbody id="coadmin-rows"><tr><td colspan="3">${L("loading")}</td></tr></tbody>
       </table>
     </div>
@@ -417,7 +505,7 @@ function renderCoadminsTab() {
     if (snap.empty) { rows.innerHTML = `<tr><td colspan="3">—</td></tr>`; return; }
     snap.forEach((d) => {
       const c = { id: d.id, ...d.data() };
-      const tr = el(`<tr><td>${escapeHtml(c.name)}</td><td>${escapeHtml(c.email)}</td><td></td></tr>`);
+      const tr = el(`<tr><td>${escapeHtml(c.name)}</td><td>${escapeHtml(c.phone || "")}</td><td></td></tr>`);
       const delBtn = el(`<button class="link danger">${L("remove")}</button>`);
       delBtn.onclick = () => { if (confirm(L("remove") + "?")) deleteDoc(doc(db, "users", c.id)); };
       tr.lastElementChild.appendChild(delBtn);
@@ -431,7 +519,8 @@ function renderNewCoadminForm() {
   const wrap = el(`
     <form id="coadmin-form" class="card">
       <label>${L("name")}<input required name="name" /></label>
-      <label>${L("email")}<input required type="email" name="email" /></label>
+      <label>${L("phone")}<input required name="phone" inputmode="numeric" maxlength="11" pattern="\\d{11}" placeholder="07701234567" /></label>
+      <p class="hint">${L("invalidPhone")}</p>
       <label>${L("password")}<input required name="code" value="${genCode(8)}" /></label>
       <div class="err" id="coadmin-err"></div>
       <button type="submit" class="primary">${L("create")}</button>
@@ -443,16 +532,18 @@ function renderNewCoadminForm() {
     const f = new FormData(e.target);
     const errBox = wrap.querySelector("#coadmin-err");
     errBox.textContent = "";
+    const phone = String(f.get("phone")).trim();
+    if (!isPhone(phone)) { errBox.textContent = L("invalidPhone"); return; }
     try {
       const secApp = getSecondaryApp();
       const secAuth = getAuth(secApp);
-      const cred = await createUserWithEmailAndPassword(secAuth, f.get("email"), f.get("code"));
+      const cred = await createUserWithEmailAndPassword(secAuth, phoneToEmail(phone), f.get("code"));
       await setDoc(doc(db, "users", cred.user.uid), {
-        role: "coadmin", name: f.get("name"), email: f.get("email"),
+        role: "coadmin", name: f.get("name"), phone,
         createdAt: serverTimestamp(), createdBy: state.user.uid,
       });
       await signOut(secAuth);
-      wrap.querySelector("#coadmin-result").innerHTML = `<div class="notice">${L("accountCreated")}<br><b>${escapeHtml(f.get("email"))}</b> / <b>${escapeHtml(f.get("code"))}</b></div>`;
+      wrap.querySelector("#coadmin-result").innerHTML = `<div class="notice">${L("accountCreated")}<br><b>${escapeHtml(phone)}</b> / <b>${escapeHtml(f.get("code"))}</b></div>`;
       e.target.reset();
     } catch (err) {
       errBox.textContent = err.message;
@@ -487,17 +578,28 @@ function renderQuestionsTab() {
   state.questions.forEach((q, i) => {
     const card = el(`
       <div class="q-card ${q.active === false ? "inactive" : ""}">
-        <div class="q-head"><span class="tag">${L(q.category)}${q.category && !["rules","salary","company","delivery","responses"].includes(q.category) ? "" : ""}</span> <span class="tag">${L(q.type)}</span> ${q.active === false ? `<span class="tag warn">${L("inactive")}</span>` : ""}</div>
+        <div class="q-head"><span class="tag">${L(q.category)}</span> <span class="tag">${L(q.type)}</span> ${q.active === false ? `<span class="tag warn">${L("inactive")}</span>` : ""}</div>
         <div class="q-text">${i + 1}. ${escapeHtml(q.text?.[state.lang] || q.text?.ar || "")}</div>
         ${q.imagePath ? `<img class="q-thumb" src="${q.imagePath}" />` : ""}
+        <div class="q-answer">${answerPreview(q)}</div>
+        <div id="q-edit-host-${q.id}"></div>
       </div>
     `);
     if (isAdmin) {
       const actions = el(`<div class="row-actions"></div>`);
+      const editBtn = el(`<button class="link">${L("edit")}</button>`);
+      editBtn.onclick = () => {
+        const host = card.querySelector(`#q-edit-host-${q.id}`);
+        host.innerHTML = host.children.length ? "" : "";
+        if (host.dataset.open) { host.innerHTML = ""; delete host.dataset.open; return; }
+        host.dataset.open = "1";
+        host.appendChild(renderQuestionForm(q));
+      };
       const toggleBtn = el(`<button class="link">${q.active === false ? L("active") : L("inactive")}</button>`);
       toggleBtn.onclick = () => updateDoc(doc(db, "questions", q.id), { active: q.active === false });
       const delBtn = el(`<button class="link danger">${L("delete")}</button>`);
       delBtn.onclick = () => { if (confirm(L("delete") + "?")) deleteDoc(doc(db, "questions", q.id)); };
+      actions.appendChild(editBtn);
       actions.appendChild(toggleBtn);
       actions.appendChild(delBtn);
       card.appendChild(actions);
@@ -508,7 +610,18 @@ function renderQuestionsTab() {
   return wrap;
 }
 
-function renderQuestionForm() {
+function answerPreview(q) {
+  if (q.type === "truefalse") {
+    return `${L("correctAnswer")}: <b>${q.correctAnswer ? L("yes") : L("no")}</b>`;
+  }
+  if (!q.options) return "";
+  return q.options.map((o, i) => {
+    const txt = escapeHtml(o[state.lang] || o.ar || "");
+    return i === q.correctIndex ? `<div class="opt-preview correct">✔ ${txt}</div>` : `<div class="opt-preview">${txt}</div>`;
+  }).join("");
+}
+
+function renderQuestionForm(existing) {
   const imgFiles = [
     "image1.jpeg","image2.jpeg","image10.jpeg","image11.jpeg","image12.jpeg","image13.jpeg",
     "image14.jpeg","image16.jpeg","image17.jpeg","image18.jpeg","image20.png","image21.png",
@@ -526,10 +639,10 @@ function renderQuestionForm() {
       <label>${L("category")}
         <select name="category">${CATEGORIES.map((c) => `<option value="${c}">${L(c)}</option>`).join("")}</select>
       </label>
-      <label>${L("points")}<input type="number" name="points" value="1" min="1" /></label>
-      <label>${L("questionTextAr")}<input name="text_ar" required /></label>
-      <label>${L("questionTextKu")}<input name="text_ku" /></label>
-      <label>${L("questionTextEn")}<input name="text_en" /></label>
+      <label>${L("points")}<input type="number" name="points" value="${existing?.points ?? 1}" min="1" /></label>
+      <label>${L("questionTextAr")}<input name="text_ar" required value="${escapeHtml(existing?.text?.ar || "")}" /></label>
+      <label>${L("questionTextKu")}<input name="text_ku" value="${escapeHtml(existing?.text?.ku || "")}" /></label>
+      <label>${L("questionTextEn")}<input name="text_en" value="${escapeHtml(existing?.text?.en || "")}" /></label>
       <div id="type-extra"></div>
       <div class="err" id="q-err"></div>
       <button type="submit" class="primary">${L("save")}</button>
@@ -537,6 +650,10 @@ function renderQuestionForm() {
   `);
   const extra = wrap.querySelector("#type-extra");
   const typeSel = wrap.querySelector("[name=type]");
+  if (existing) {
+    typeSel.value = existing.type;
+    wrap.querySelector("[name=category]").value = existing.category || CATEGORIES[0];
+  }
   function renderExtra() {
     extra.innerHTML = "";
     const type = typeSel.value;
@@ -567,6 +684,16 @@ function renderQuestionForm() {
           </label>
         `));
       }
+      if (existing && (existing.type === "mcq" || existing.type === "image") && existing.options) {
+        existing.options.forEach((o, i) => {
+          extra.querySelector(`[name=opt_ar_${i}]`).value = o.ar || "";
+          extra.querySelector(`[name=opt_ku_${i}]`).value = o.ku || "";
+          extra.querySelector(`[name=opt_en_${i}]`).value = o.en || "";
+        });
+        extra.querySelector("[name=correctIndex]").value = existing.correctIndex ?? 0;
+        const imgSel = extra.querySelector("[name=imagePath]");
+        if (imgSel && existing.imagePath) imgSel.value = existing.imagePath;
+      }
     } else if (type === "truefalse") {
       extra.appendChild(el(`
         <label>${L("correctAnswer")}
@@ -576,6 +703,9 @@ function renderQuestionForm() {
           </select>
         </label>
       `));
+      if (existing && existing.type === "truefalse") {
+        extra.querySelector("[name=correctAnswer]").value = String(!!existing.correctAnswer);
+      }
     }
   }
   typeSel.onchange = renderExtra;
@@ -590,9 +720,8 @@ function renderQuestionForm() {
       category: f.get("category"),
       points: Number(f.get("points")) || 1,
       text: { ar: f.get("text_ar"), ku: f.get("text_ku") || f.get("text_ar"), en: f.get("text_en") || f.get("text_ar") },
-      active: true,
-      createdAt: serverTimestamp(),
     };
+    if (!existing) { data.active = true; data.createdAt = serverTimestamp(); }
     if (type === "mcq" || type === "image") {
       data.options = [0,1,2,3].map((i) => ({
         ar: f.get(`opt_ar_${i}`) || "", ku: f.get(`opt_ku_${i}`) || f.get(`opt_ar_${i}`) || "", en: f.get(`opt_en_${i}`) || f.get(`opt_ar_${i}`) || "",
@@ -603,9 +732,13 @@ function renderQuestionForm() {
       data.correctAnswer = f.get("correctAnswer") === "true";
     }
     try {
-      await addDoc(collection(db, "questions"), data);
-      e.target.reset();
-      renderExtra();
+      if (existing) {
+        await updateDoc(doc(db, "questions", existing.id), data);
+      } else {
+        await addDoc(collection(db, "questions"), data);
+        e.target.reset();
+        renderExtra();
+      }
     } catch (err) {
       wrap.querySelector("#q-err").textContent = err.message;
     }
@@ -640,8 +773,10 @@ function renderExam() {
         <h2>${L("appName")}</h2>
         <p>${escapeHtml(state.profile.name || "")}</p>
         <button id="start-btn" class="primary">${L("startExam")}</button>
+        <div><button id="logout-btn" class="ghost">${L("logout")}</button></div>
       </div>
     `);
+    wrap.querySelector("#logout-btn").onclick = () => signOut(auth);
     wrap.querySelector("#start-btn").onclick = async () => {
       await updateDoc(doc(db, "users", state.profile.id), { examStatus: "in_progress", startedAt: serverTimestamp() });
       setState({ profile: { ...state.profile, examStatus: "in_progress" } });

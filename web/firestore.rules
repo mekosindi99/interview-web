@@ -43,5 +43,17 @@ service cloud.firestore {
       allow read: if isSignedIn() && (request.auth.uid == uid || isStaff());
       allow create, update: if isSignedIn() && request.auth.uid == uid;
     }
+
+    // Best-effort device/IP block list: checked right after sign-in so a
+    // blocked candidate can't just re-register a fresh account on the same
+    // device/network. Not a hard security boundary (client-reported values).
+    match /blockedDevices/{id} {
+      allow read: if isSignedIn();
+      allow write: if isStaff();
+    }
+    match /blockedIPs/{id} {
+      allow read: if isSignedIn();
+      allow write: if isStaff();
+    }
   }
 }

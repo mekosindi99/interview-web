@@ -57,6 +57,7 @@ button.link.warn { color: #a06600; }
 button:disabled { opacity: .5; cursor: not-allowed; }
 
 .err { color: var(--bad); font-size: 13px; min-height: 18px; }
+.hint { color: var(--muted); font-size: 12px; margin: -6px 0 10px; }
 .notice { background: #fff7e6; border: 1px solid #f0c36d; padding: 10px; border-radius: 8px; margin-top: 10px; font-size: 14px; }
 
 .shell { display: flex; flex-direction: column; gap: 12px; }
@@ -87,6 +88,10 @@ table.grid th { background: #fafafa; color: var(--muted); font-weight: 600; }
 
 .opt-set { border: 1px dashed var(--border); border-radius: 8px; padding: 8px; margin-bottom: 8px; display: flex; gap: 6px; }
 .opt-set input { margin-top: 0; }
+
+.q-answer { margin-top: 8px; font-size: 13px; }
+.opt-preview { padding: 3px 8px; color: var(--muted); }
+.opt-preview.correct { color: var(--ok); font-weight: 600; }
 
 .exam-progress { text-align: center; color: var(--muted); font-size: 14px; }
 .q-card-big { max-width: 640px; margin: 0 auto; }

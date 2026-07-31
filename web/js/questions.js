@@ -10,7 +10,7 @@
 // "بنك الأسئلة" screen using the image library in assets/questions/ and type
 // in the verified correct answer.
 
-export const CATEGORIES = ["rules", "salary", "company", "delivery", "responses"];
+export const CATEGORIES = ["rules", "salary", "company", "delivery", "responses", "tools"];
 
 export const seedQuestions = [
   // --- Rules / policy (بنود الشغل) ---
