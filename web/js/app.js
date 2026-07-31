@@ -1,4 +1,4 @@
-import { firebaseConfig, ADMIN_SETUP_KEY } from "./firebase-config.js";
+import { firebaseConfig, ADMIN_SETUP_KEY, ADMIN_SERVER_URL } from "./firebase-config.js";
 import { tr, DIR, LANG_NAME, LANGS } from "./i18n.js";
 import { seedQuestions, CATEGORIES } from "./questions.js";
 
@@ -457,6 +457,23 @@ function renderCandidatesTab() {
         await updateDoc(doc(db, "users", c.id), { deleted: true });
       };
       actions.appendChild(delBtn);
+      if (ADMIN_SERVER_URL) {
+        const hardDelBtn = el(`<button class="link danger">${L("hardDelete")}</button>`);
+        hardDelBtn.onclick = async () => {
+          if (!confirm(L("hardDeleteConfirm"))) return;
+          try {
+            const token = await state.user.getIdToken();
+            const res = await fetch(`${ADMIN_SERVER_URL}/users/${c.id}`, {
+              method: "DELETE",
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+          } catch (err) {
+            alert(`${L("error")}: ${err.message}`);
+          }
+        };
+        actions.appendChild(hardDelBtn);
+      }
     }
     rows.appendChild(tr);
   });

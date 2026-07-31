@@ -12,3 +12,9 @@ export const firebaseConfig = {
 // One-time setup key used only to bootstrap the FIRST admin account
 // (see #admin-setup route). Change this before deploying if you want.
 export const ADMIN_SETUP_KEY = "sonbola-admin-2026";
+
+// Optional: base URL of the tiny server/ backend (see server/README) that
+// can permanently delete a candidate's login, not just hide their profile.
+// Leave empty to hide the "permanent delete" option — the site works fine
+// without it (soft-delete/restore is always available).
+export const ADMIN_SERVER_URL = "";

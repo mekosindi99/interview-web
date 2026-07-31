@@ -1,0 +1,27 @@
+name: Keep admin-server awake
+
+# Render's free plan spins a web service down after 15 minutes of no
+# traffic (next request then pays a ~30-50s cold-start). This pings its
+# health endpoint every 5 minutes so an admin's "hard delete" click never
+# has to wait through a cold start.
+#
+# Set the RENDER_HEALTH_URL repo secret (Settings → Secrets and variables →
+# Actions) to the deployed server's URL, e.g. https://interview-admin-server.onrender.com
+# Until that secret is set, this job just skips itself — no error, no-op.
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping health endpoint
+        run: |
+          if [ -z "${{ secrets.RENDER_HEALTH_URL }}" ]; then
+            echo "RENDER_HEALTH_URL secret not set yet — skipping."
+            exit 0
+          fi
+          curl -fsS "${{ secrets.RENDER_HEALTH_URL }}" || true
