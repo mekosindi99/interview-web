@@ -1,0 +1,47 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() { return request.auth != null; }
+    function role() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+    function isAdmin() { return isSignedIn() && role() == 'admin'; }
+    function isStaff() { return isSignedIn() && (role() == 'admin' || role() == 'coadmin'); }
+
+    match /meta/adminBootstrap {
+      allow read: if true;
+      // Locks itself after the very first admin account is created.
+      allow create: if isSignedIn() && !exists(/databases/$(database)/documents/meta/adminBootstrap);
+      allow update, delete: if false;
+    }
+
+    match /users/{uid} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || isStaff());
+      // Candidates may only update their own exam-progress fields, never role/blocked/score.
+      allow update: if isSignedIn() && request.auth.uid == uid
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.blocked == resource.data.blocked
+        && !("score" in request.resource.data.diff(resource.data).affectedKeys());
+      allow update, delete: if isAdmin();
+      allow update: if isSignedIn() && role() == 'coadmin' && resource.data.role == 'candidate';
+      allow create: if isStaff(); // admin/coadmin create candidate & coadmin accounts (via secondary auth app)
+      // One-time bootstrap: a brand-new signed-in user may create their OWN
+      // profile as 'admin' only while meta/adminBootstrap doesn't exist yet.
+      allow create: if isSignedIn() && request.auth.uid == uid
+        && request.resource.data.role == 'admin'
+        && !exists(/databases/$(database)/documents/meta/adminBootstrap);
+    }
+
+    match /questions/{qid} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /attempts/{uid} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || isStaff());
+      allow create, update: if isSignedIn() && request.auth.uid == uid;
+    }
+  }
+}

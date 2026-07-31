@@ -1,0 +1,5 @@
+node_modules/
+.claude/
+interview.docx
+info.txt
+*.log
