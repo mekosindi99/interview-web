@@ -221,14 +221,17 @@ function render() {
   root.appendChild(renderAdminShell());
 }
 
-const LANG_BADGE = { ar: "IQ", ku: "🟨🟩🟥", en: "US" };
+// Real flag glyphs. Kurdish has no official Unicode flag emoji, so it's a
+// tiny inline SVG of the Kurdistan flag instead of an emoji.
+const KURD_FLAG_SVG = `<svg viewBox="0 0 30 20" class="flag-svg"><rect width="30" height="20" fill="#ED1C24"/><rect width="30" height="13.34" fill="#fff"/><rect width="30" height="6.67" fill="#007A3D"/><circle cx="15" cy="10" r="3.2" fill="none" stroke="#F9A11B" stroke-width="0.5"/><g fill="#F9A11B">${Array.from({length:21},(_,i)=>{const a=(i*360/21)*Math.PI/180;const x1=15+2.6*Math.cos(a),y1=10+2.6*Math.sin(a),x2=15+4*Math.cos(a),y2=10+4*Math.sin(a);return `<line x1="${x1.toFixed(2)}" y1="${y1.toFixed(2)}" x2="${x2.toFixed(2)}" y2="${y2.toFixed(2)}" stroke="#F9A11B" stroke-width="0.5"/>`;}).join("")}</g></svg>`;
+const LANG_FLAG = { ar: "🇮🇶", ku: KURD_FLAG_SVG, en: "🇺🇸" };
+function flagHtml(l) { return l === "ku" ? KURD_FLAG_SVG : `<span class="flag-emoji">${LANG_FLAG[l]}</span>`; }
+
 function langSwitcher() {
   const wrap = el(`
     <div class="lang-dd">
-      <button class="lang-dd-btn" id="lang-dd-btn" type="button">
-        <span class="lang-dd-badge">${LANG_BADGE[state.lang]}</span>
-        <span>${LANG_NAME[state.lang]}</span>
-        <span class="lang-dd-caret">▾</span>
+      <button class="lang-dd-btn" id="lang-dd-btn" type="button" aria-label="${L("changeLang")}">
+        ${flagHtml(state.lang)}
       </button>
       <div class="lang-dd-menu" id="lang-dd-menu" hidden></div>
     </div>
@@ -237,9 +240,9 @@ function langSwitcher() {
   LANGS.forEach((l) => {
     const item = el(`
       <button type="button" class="lang-dd-item ${l === state.lang ? "active" : ""}">
-        <span class="lang-dd-check">${l === state.lang ? "✔" : ""}</span>
+        ${flagHtml(l)}
         <span>${LANG_NAME[l]}</span>
-        <span class="lang-dd-badge">${LANG_BADGE[l]}</span>
+        <span class="lang-dd-check">${l === state.lang ? "✔" : ""}</span>
       </button>
     `);
     item.onclick = () => { localStorage.setItem("lang", l); setState({ lang: l }); };
@@ -779,6 +782,16 @@ function renderExam() {
   }
   if (!activeQs.length) return el(`<div class="card center-card">${L("noQuestions")}</div>`);
 
+  // Restore answers/position saved on the candidate's own profile so a
+  // refresh mid-exam doesn't wipe progress (previously it did — this was
+  // reported and is now fixed).
+  if (state._progressLoadedFor !== state.profile.id) {
+    examLocalAnswers = state.profile.examProgress ? { ...state.profile.examProgress } : {};
+    examQIndex = Number.isInteger(state.profile.examQIndex)
+      ? Math.min(state.profile.examQIndex, activeQs.length - 1) : 0;
+    state._progressLoadedFor = state.profile.id;
+  }
+
   if (state.profile.examStatus === "not_started") {
     const wrap = el(`
       <div class="card center-card">
@@ -827,17 +840,24 @@ function renderExam() {
     const optEl = el(`<label class="option ${checked ? "picked" : ""}"><input type="radio" name="ans" ${checked ? "checked" : ""}/> ${escapeHtml(o.label)}</label>`);
     optEl.querySelector("input").onchange = () => {
       examLocalAnswers[q.id] = o.value;
+      saveExamProgress();
       render();
     };
     optHost.appendChild(optEl);
   });
   const prevBtn = wrap.querySelector("#prev-btn");
-  if (prevBtn) prevBtn.onclick = () => { examQIndex = Math.max(0, examQIndex - 1); render(); };
+  if (prevBtn) prevBtn.onclick = () => { examQIndex = Math.max(0, examQIndex - 1); saveExamProgress(); render(); };
   const nextBtn = wrap.querySelector("#next-btn");
-  if (nextBtn) nextBtn.onclick = () => { examQIndex = Math.min(activeQs.length - 1, examQIndex + 1); render(); };
+  if (nextBtn) nextBtn.onclick = () => { examQIndex = Math.min(activeQs.length - 1, examQIndex + 1); saveExamProgress(); render(); };
   const submitBtn = wrap.querySelector("#submit-btn");
   if (submitBtn) submitBtn.onclick = () => { if (confirm(L("submitConfirm"))) submitExam(activeQs); };
   return wrap;
+}
+
+function saveExamProgress() {
+  updateDoc(doc(db, "users", state.profile.id), {
+    examProgress: examLocalAnswers, examQIndex,
+  }).catch(() => {});
 }
 
 async function loadQuestionsForCandidate() {

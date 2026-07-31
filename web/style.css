@@ -24,27 +24,27 @@ body {
 
 .lang-dd { position: relative; display: flex; justify-content: flex-end; margin-bottom: 12px; }
 .lang-dd-btn {
-  display: flex; align-items: center; gap: 6px;
-  border: 1px solid var(--border); background: var(--card); border-radius: 20px;
-  padding: 6px 14px; cursor: pointer; font-size: 13px; color: var(--text);
+  display: flex; align-items: center; justify-content: center;
+  width: 40px; height: 40px; border: 1px solid var(--border); background: var(--card);
+  border-radius: 50%; cursor: pointer; padding: 0; overflow: hidden;
 }
-.lang-dd-badge { font-size: 11px; color: var(--muted); }
-.lang-dd-caret { font-size: 10px; color: var(--muted); }
+.flag-emoji { font-size: 20px; line-height: 1; }
+.flag-svg { width: 22px; height: 15px; border-radius: 2px; display: block; }
+.lang-dd-btn .flag-svg { width: 26px; height: 17px; border-radius: 3px; }
 .lang-dd-menu {
   position: absolute; top: calc(100% + 6px); inset-inline-end: 0; z-index: 20;
   background: var(--card); border: 1px solid var(--border); border-radius: 12px;
-  box-shadow: 0 6px 20px rgba(0,0,0,.12); padding: 6px; min-width: 160px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.12); padding: 6px; min-width: 170px;
   display: flex; flex-direction: column; gap: 2px;
 }
 .lang-dd-item {
-  display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px;
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px;
   background: none; border: none; cursor: pointer; font-size: 14px; color: var(--text);
   text-align: start; width: 100%;
 }
 .lang-dd-item:hover { background: var(--bg); }
 .lang-dd-item.active { color: var(--primary); font-weight: 600; }
-.lang-dd-check { width: 14px; font-size: 12px; color: var(--primary); }
-.lang-dd-item .lang-dd-badge { margin-inline-start: auto; }
+.lang-dd-check { width: 16px; font-size: 12px; color: var(--primary); margin-inline-start: auto; }
 
 .card {
   background: var(--card); border: 1px solid var(--border); border-radius: 12px;
