@@ -17,4 +17,4 @@ export const ADMIN_SETUP_KEY = "sonbola-admin-2026";
 // can permanently delete a candidate's login, not just hide their profile.
 // Leave empty to hide the "permanent delete" option — the site works fine
 // without it (soft-delete/restore is always available).
-export const ADMIN_SERVER_URL = "";
+export const ADMIN_SERVER_URL = "https://interview-admin-server.onrender.com";
