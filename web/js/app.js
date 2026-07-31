@@ -74,9 +74,8 @@ onAuthStateChanged(auth, async (user) => {
   }
   if (profile.role === "candidate") {
     const deviceId = getDeviceId();
-    const ip = await getClientIp();
-    if (deviceId !== profile.deviceId || (ip && ip !== profile.ip)) {
-      updateDoc(doc(db, "users", user.uid), { deviceId, ...(ip ? { ip } : {}) }).catch(() => {});
+    if (deviceId !== profile.deviceId) {
+      updateDoc(doc(db, "users", user.uid), { deviceId }).catch(() => {});
     }
   }
   setState({
@@ -142,10 +141,15 @@ const PHONE_DOMAIN = "phone.interview.local";
 function phoneToEmail(phone) { return `${phone}@${PHONE_DOMAIN}`; }
 function isPhone(v) { return /^\d{11}$/.test(v); }
 
-// ---------- Device/IP fingerprint (best-effort abuse deterrent) ----------
-// NOT a real security boundary: a determined user can clear localStorage or
-// change IP (VPN/mobile data) to route around this. It only stops the common
-// case of someone re-registering with the same phone/browser after a block.
+// ---------- Device fingerprint (best-effort abuse deterrent) ----------
+// NOT a real security boundary: clearing localStorage or using a different
+// browser routes around this. It only stops the common case of someone
+// re-registering with the same phone on the same browser after a block.
+//
+// Deliberately device-only, NOT IP-based: an IP is shared by an entire
+// household/office network (NAT), so blocking an IP can lock out everyone
+// on that network, including staff/admins — this happened once during
+// testing and is not an acceptable tradeoff for a soft deterrent.
 function getDeviceId() {
   let id = localStorage.getItem("device_id");
   if (!id) {
@@ -154,23 +158,10 @@ function getDeviceId() {
   }
   return id;
 }
-async function getClientIp() {
-  try {
-    const res = await fetch("https://api.ipify.org?format=json");
-    const data = await res.json();
-    return data.ip || null;
-  } catch {
-    return null;
-  }
-}
 async function isFingerprintBlocked() {
   try {
-    const deviceId = getDeviceId();
-    const ip = await getClientIp();
-    const checks = [getDoc(doc(db, "blockedDevices", deviceId))];
-    if (ip) checks.push(getDoc(doc(db, "blockedIPs", ip)));
-    const snaps = await Promise.all(checks);
-    return snaps.some((s) => s.exists());
+    const snap = await getDoc(doc(db, "blockedDevices", getDeviceId()));
+    return snap.exists();
   } catch (err) {
     // Fail-open: this is a deterrent, not the primary access control (the
     // per-account "blocked" flag is), so a rules/network hiccup here must
@@ -180,16 +171,12 @@ async function isFingerprintBlocked() {
   }
 }
 async function blacklistFingerprint(c) {
-  const writes = [];
-  if (c.deviceId) writes.push(setDoc(doc(db, "blockedDevices", c.deviceId), { blockedAt: serverTimestamp(), fromUid: c.id }));
-  if (c.ip) writes.push(setDoc(doc(db, "blockedIPs", c.ip), { blockedAt: serverTimestamp(), fromUid: c.id }));
-  await Promise.all(writes);
+  if (!c.deviceId) return;
+  await setDoc(doc(db, "blockedDevices", c.deviceId), { blockedAt: serverTimestamp(), fromUid: c.id });
 }
 async function unblacklistFingerprint(c) {
-  const writes = [];
-  if (c.deviceId) writes.push(deleteDoc(doc(db, "blockedDevices", c.deviceId)).catch(() => {}));
-  if (c.ip) writes.push(deleteDoc(doc(db, "blockedIPs", c.ip)).catch(() => {}));
-  await Promise.all(writes);
+  if (!c.deviceId) return;
+  await deleteDoc(doc(db, "blockedDevices", c.deviceId)).catch(() => {});
 }
 
 function genCode(len = 6) {
@@ -234,13 +221,33 @@ function render() {
   root.appendChild(renderAdminShell());
 }
 
+const LANG_BADGE = { ar: "IQ", ku: "🟨🟩🟥", en: "US" };
 function langSwitcher() {
-  const wrap = el(`<div class="lang-switch"></div>`);
+  const wrap = el(`
+    <div class="lang-dd">
+      <button class="lang-dd-btn" id="lang-dd-btn" type="button">
+        <span class="lang-dd-badge">${LANG_BADGE[state.lang]}</span>
+        <span>${LANG_NAME[state.lang]}</span>
+        <span class="lang-dd-caret">▾</span>
+      </button>
+      <div class="lang-dd-menu" id="lang-dd-menu" hidden></div>
+    </div>
+  `);
+  const menu = wrap.querySelector("#lang-dd-menu");
   LANGS.forEach((l) => {
-    const b = el(`<button class="${l === state.lang ? "active" : ""}">${LANG_NAME[l]}</button>`);
-    b.onclick = () => { localStorage.setItem("lang", l); setState({ lang: l }); };
-    wrap.appendChild(b);
+    const item = el(`
+      <button type="button" class="lang-dd-item ${l === state.lang ? "active" : ""}">
+        <span class="lang-dd-check">${l === state.lang ? "✔" : ""}</span>
+        <span>${LANG_NAME[l]}</span>
+        <span class="lang-dd-badge">${LANG_BADGE[l]}</span>
+      </button>
+    `);
+    item.onclick = () => { localStorage.setItem("lang", l); setState({ lang: l }); };
+    menu.appendChild(item);
   });
+  const btn = wrap.querySelector("#lang-dd-btn");
+  btn.onclick = (e) => { e.stopPropagation(); menu.hidden = !menu.hidden; };
+  document.addEventListener("click", () => { menu.hidden = true; }, { once: true });
   return wrap;
 }
 

@@ -22,12 +22,29 @@ body {
 
 #app { max-width: 960px; margin: 0 auto; padding: 16px; }
 
-.lang-switch { display: flex; gap: 6px; justify-content: flex-end; margin-bottom: 12px; }
-.lang-switch button {
+.lang-dd { position: relative; display: flex; justify-content: flex-end; margin-bottom: 12px; }
+.lang-dd-btn {
+  display: flex; align-items: center; gap: 6px;
   border: 1px solid var(--border); background: var(--card); border-radius: 20px;
-  padding: 4px 12px; cursor: pointer; font-size: 13px;
+  padding: 6px 14px; cursor: pointer; font-size: 13px; color: var(--text);
 }
-.lang-switch button.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+.lang-dd-badge { font-size: 11px; color: var(--muted); }
+.lang-dd-caret { font-size: 10px; color: var(--muted); }
+.lang-dd-menu {
+  position: absolute; top: calc(100% + 6px); inset-inline-end: 0; z-index: 20;
+  background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.12); padding: 6px; min-width: 160px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.lang-dd-item {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px;
+  background: none; border: none; cursor: pointer; font-size: 14px; color: var(--text);
+  text-align: start; width: 100%;
+}
+.lang-dd-item:hover { background: var(--bg); }
+.lang-dd-item.active { color: var(--primary); font-weight: 600; }
+.lang-dd-check { width: 14px; font-size: 12px; color: var(--primary); }
+.lang-dd-item .lang-dd-badge { margin-inline-start: auto; }
 
 .card {
   background: var(--card); border: 1px solid var(--border); border-radius: 12px;

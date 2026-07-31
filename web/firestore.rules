@@ -44,14 +44,13 @@ service cloud.firestore {
       allow create, update: if isSignedIn() && request.auth.uid == uid;
     }
 
-    // Best-effort device/IP block list: checked right after sign-in so a
+    // Best-effort device block list: checked right after sign-in so a
     // blocked candidate can't just re-register a fresh account on the same
-    // device/network. Not a hard security boundary (client-reported values).
+    // browser. Deliberately device-only, not IP-based — an IP is shared by
+    // a whole household/office network, so blocking one would risk locking
+    // out everyone else on that network too. Not a hard security boundary
+    // (client-reported device id).
     match /blockedDevices/{id} {
-      allow read: if isSignedIn();
-      allow write: if isStaff();
-    }
-    match /blockedIPs/{id} {
       allow read: if isSignedIn();
       allow write: if isStaff();
     }
