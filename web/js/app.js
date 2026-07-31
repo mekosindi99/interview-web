@@ -385,6 +385,28 @@ function statusLabel(c) {
   return L(EXAM_STATUS_KEY[c.examStatus] || "notStarted");
 }
 
+// Calls the optional admin-server to actually delete the Firebase Auth
+// login (not just the Firestore profile) — see server/README.md. Available
+// wherever a candidate row is shown, including already-hidden/removed ones,
+// since a soft-deleted profile can still have an orphaned Auth account.
+function makeHardDeleteBtn(c) {
+  const btn = el(`<button class="link danger">${L("hardDelete")}</button>`);
+  btn.onclick = async () => {
+    if (!confirm(L("hardDeleteConfirm"))) return;
+    try {
+      const token = await state.user.getIdToken();
+      const res = await fetch(`${ADMIN_SERVER_URL}/users/${c.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+    } catch (err) {
+      alert(`${L("error")}: ${err.message}`);
+    }
+  };
+  return btn;
+}
+
 function renderCandidatesTab() {
   const showRemoved = !!state.showRemovedCandidates;
   const visible = state.candidates.filter((c) => showRemoved ? c.deleted : !c.deleted);
@@ -433,6 +455,7 @@ function renderCandidatesTab() {
         try { await unblacklistFingerprint(c); } catch (err) { console.warn("fingerprint unblock failed", err); }
       };
       actions.appendChild(restoreBtn);
+      if (ADMIN_SERVER_URL && state.profile.role === "admin") actions.appendChild(makeHardDeleteBtn(c));
       rows.appendChild(tr);
       return;
     }
@@ -457,23 +480,7 @@ function renderCandidatesTab() {
         await updateDoc(doc(db, "users", c.id), { deleted: true });
       };
       actions.appendChild(delBtn);
-      if (ADMIN_SERVER_URL) {
-        const hardDelBtn = el(`<button class="link danger">${L("hardDelete")}</button>`);
-        hardDelBtn.onclick = async () => {
-          if (!confirm(L("hardDeleteConfirm"))) return;
-          try {
-            const token = await state.user.getIdToken();
-            const res = await fetch(`${ADMIN_SERVER_URL}/users/${c.id}`, {
-              method: "DELETE",
-              headers: { Authorization: `Bearer ${token}` },
-            });
-            if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
-          } catch (err) {
-            alert(`${L("error")}: ${err.message}`);
-          }
-        };
-        actions.appendChild(hardDelBtn);
-      }
+      if (ADMIN_SERVER_URL) actions.appendChild(makeHardDeleteBtn(c));
     }
     rows.appendChild(tr);
   });
