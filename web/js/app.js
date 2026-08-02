@@ -74,7 +74,7 @@ let state = {
   questions: [],
   candidates: [],
   attempts: {},
-  examConfig: { sectionMinutes: { ...DEFAULT_SECTION_MINUTES }, sectionCounts: { ...DEFAULT_SECTION_COUNTS }, sectionOrder: [...SECTIONS] },
+  examConfig: { sectionMinutes: { ...DEFAULT_SECTION_MINUTES }, sectionCounts: { ...DEFAULT_SECTION_COUNTS }, sectionOrder: [...SECTIONS], selectionMode: "random", manualQuestionIds: [] },
   material: null,
 };
 
@@ -182,6 +182,10 @@ function mergeExamConfig(data) {
     sectionMinutes: { ...DEFAULT_SECTION_MINUTES, ...(data?.sectionMinutes || {}) },
     sectionCounts: { ...DEFAULT_SECTION_COUNTS, ...(data?.sectionCounts || {}) },
     sectionOrder: (data?.sectionOrder && data.sectionOrder.length === SECTIONS.length) ? data.sectionOrder : [...SECTIONS],
+    // "random": sectionCounts picks a fresh random subset per candidate.
+    // "manual": every candidate gets the exact same admin-picked question set.
+    selectionMode: data?.selectionMode === "manual" ? "manual" : "random",
+    manualQuestionIds: Array.isArray(data?.manualQuestionIds) ? data.manualQuestionIds : [],
   };
 }
 function watchExamConfig() {
@@ -452,35 +456,129 @@ function renderAdminShell() {
 
 function renderExamSettingsTab() {
   const cfg = state.examConfig;
-  const wrap = el(`
-    <form id="exam-settings-form" class="card">
+  const wrap = el(`<div></div>`);
+
+  // ---- Per-section time limits (independent of selection mode) ----
+  const minutesForm = el(`
+    <form id="minutes-form" class="card">
       <h3>${L("sectionMinutesLabel")}</h3>
       ${SECTIONS.map((s) => `
         <label>${L(s)}<input type="number" name="min_${s}" min="1" value="${cfg.sectionMinutes[s]}" /></label>
       `).join("")}
-      <h3>${L("sectionCountsLabel")}</h3>
-      <p class="hint">${L("sectionCountsHint")}</p>
-      ${SECTIONS.map((s) => `
-        <label>${L(s)}<input type="number" name="count_${s}" min="0" value="${cfg.sectionCounts[s]}" /></label>
-      `).join("")}
-      <div class="err" id="settings-msg"></div>
+      <div class="err" id="minutes-msg"></div>
       <button type="submit" class="primary">${L("saveSettings")}</button>
     </form>
   `);
-  wrap.onsubmit = async (e) => {
+  minutesForm.onsubmit = async (e) => {
     e.preventDefault();
     const f = new FormData(e.target);
     const sectionMinutes = {};
-    const sectionCounts = {};
-    SECTIONS.forEach((s) => {
-      sectionMinutes[s] = Number(f.get(`min_${s}`)) || DEFAULT_SECTION_MINUTES[s];
-      sectionCounts[s] = Math.max(0, Number(f.get(`count_${s}`)) || 0);
-    });
-    await setDoc(doc(db, "settings", "examConfig"), { sectionMinutes, sectionCounts, sectionOrder: SECTIONS }, { merge: true });
-    wrap.querySelector("#settings-msg").textContent = L("settingsSaved");
-    wrap.querySelector("#settings-msg").classList.remove("err");
-    wrap.querySelector("#settings-msg").classList.add("notice");
+    SECTIONS.forEach((s) => { sectionMinutes[s] = Number(f.get(`min_${s}`)) || DEFAULT_SECTION_MINUTES[s]; });
+    await setDoc(doc(db, "settings", "examConfig"), { sectionMinutes, sectionOrder: SECTIONS }, { merge: true });
+    state.examConfig = { ...state.examConfig, sectionMinutes };
+    const msg = minutesForm.querySelector("#minutes-msg");
+    msg.textContent = L("settingsSaved"); msg.classList.remove("err"); msg.classList.add("notice");
   };
+  wrap.appendChild(minutesForm);
+
+  // ---- Question selection mode: random (per-candidate sample) vs manual
+  // (one fixed set, same for every candidate) ----
+  const modeCard = el(`<div class="card"></div>`);
+  modeCard.appendChild(el(`<h3>${L("questionSelectionMode")}</h3>`));
+  const modeButtons = el(`
+    <div class="row-actions" style="margin-bottom:14px">
+      <button type="button" id="mode-random-btn">${L("modeRandom")}</button>
+      <button type="button" id="mode-manual-btn">${L("modeManual")}</button>
+    </div>
+  `);
+  modeCard.appendChild(modeButtons);
+  const modeBody = el(`<div id="mode-body"></div>`);
+  modeCard.appendChild(modeBody);
+  wrap.appendChild(modeCard);
+
+  let currentMode = cfg.selectionMode || "random";
+  const randomBtn = modeButtons.querySelector("#mode-random-btn");
+  const manualBtn = modeButtons.querySelector("#mode-manual-btn");
+
+  function renderModeBody() {
+    randomBtn.className = currentMode === "random" ? "primary" : "ghost";
+    manualBtn.className = currentMode === "manual" ? "primary" : "ghost";
+    modeBody.innerHTML = "";
+
+    if (currentMode === "random") {
+      const randomForm = el(`
+        <form id="random-form">
+          <p class="hint">${L("sectionCountsHint")}</p>
+          ${SECTIONS.map((s) => `<label>${L(s)}<input type="number" name="count_${s}" min="0" value="${state.examConfig.sectionCounts[s]}" /></label>`).join("")}
+          <div class="err" id="random-msg"></div>
+          <button type="submit" class="primary">${L("saveSettings")}</button>
+        </form>
+      `);
+      randomForm.onsubmit = async (e) => {
+        e.preventDefault();
+        const f = new FormData(e.target);
+        const sectionCounts = {};
+        SECTIONS.forEach((s) => { sectionCounts[s] = Math.max(0, Number(f.get(`count_${s}`)) || 0); });
+        await setDoc(doc(db, "settings", "examConfig"), { selectionMode: "random", sectionCounts }, { merge: true });
+        state.examConfig = { ...state.examConfig, selectionMode: "random", sectionCounts };
+        const msg = randomForm.querySelector("#random-msg");
+        msg.textContent = L("settingsSaved"); msg.classList.remove("err"); msg.classList.add("notice");
+      };
+      modeBody.appendChild(randomForm);
+      return;
+    }
+
+    // Manual: a checkbox list of every active question, grouped by section.
+    // Pre-checked from whatever is already saved in manualQuestionIds.
+    const activeQs = state.questions.filter((q) => q.active !== false);
+    const bySection = SECTIONS
+      .map((s) => ({ section: s, qs: activeQs.filter((q) => (q.section || "reading") === s) }))
+      .filter((g) => g.qs.length);
+    const checkedIds = new Set(state.examConfig.manualQuestionIds || []);
+
+    modeBody.appendChild(el(`<p class="hint">${L("manualSelectionHint")}</p>`));
+    const list = el(`<div class="manual-q-list"></div>`);
+    if (!bySection.length) list.appendChild(el(`<p>${L("noQuestions")}</p>`));
+    bySection.forEach((g) => {
+      list.appendChild(el(`<h4 class="manual-q-section-h">${L(g.section)}</h4>`));
+      g.qs.forEach((q, i) => {
+        list.appendChild(el(`
+          <label class="manual-q-row">
+            <input type="checkbox" value="${q.id}" ${checkedIds.has(q.id) ? "checked" : ""} />
+            ${i + 1}. ${escapeHtml(q.text?.[state.lang] || q.text?.ar || "")}
+          </label>
+        `));
+      });
+    });
+    modeBody.appendChild(list);
+
+    const msg = el(`<div class="err" id="manual-msg"></div>`);
+    const actions = el(`<div class="row-actions" style="margin-top:12px"></div>`);
+    const clearBtn = el(`<button type="button" class="ghost danger">${L("clearSelection")}</button>`);
+    clearBtn.onclick = async () => {
+      if (!confirm(L("clearSelectionConfirm"))) return;
+      await setDoc(doc(db, "settings", "examConfig"), { manualQuestionIds: [] }, { merge: true });
+      state.examConfig = { ...state.examConfig, manualQuestionIds: [] };
+      list.querySelectorAll("input[type=checkbox]").forEach((cb) => { cb.checked = false; });
+      msg.textContent = L("selectionCleared"); msg.classList.remove("err"); msg.classList.add("notice");
+    };
+    const saveBtn = el(`<button type="button" class="primary">${L("saveSelection")}</button>`);
+    saveBtn.onclick = async () => {
+      const ids = [...list.querySelectorAll("input[type=checkbox]:checked")].map((cb) => cb.value);
+      if (!ids.length) { msg.textContent = L("selectAtLeastOne"); msg.classList.remove("notice"); return; }
+      await setDoc(doc(db, "settings", "examConfig"), { selectionMode: "manual", manualQuestionIds: ids }, { merge: true });
+      state.examConfig = { ...state.examConfig, selectionMode: "manual", manualQuestionIds: ids };
+      msg.textContent = L("settingsSaved"); msg.classList.remove("err"); msg.classList.add("notice");
+    };
+    actions.appendChild(clearBtn);
+    actions.appendChild(saveBtn);
+    modeBody.appendChild(msg);
+    modeBody.appendChild(actions);
+  }
+  randomBtn.onclick = () => { currentMode = "random"; renderModeBody(); };
+  manualBtn.onclick = () => { currentMode = "manual"; renderModeBody(); };
+  renderModeBody();
+
   return wrap;
 }
 
@@ -1326,13 +1424,23 @@ function renderExam() {
     `);
     wrap.querySelector("#material-btn").onclick = () => setState({ route: "material" });
     wrap.querySelector("#start-btn").onclick = async () => {
-      // Sample once, here, from the full pool — sectionCounts of 0 means
-      // "use everything" (pickRandom returns the whole array in that case).
-      const examSelectedQuestionIds = [];
-      fullSections.forEach((sec) => {
-        const n = state.examConfig.sectionCounts[sec.section] || 0;
-        pickRandom(sec.qs, n).forEach((q) => examSelectedQuestionIds.push(q.id));
-      });
+      // Manual mode: every candidate gets the exact same admin-picked set.
+      // Random mode: sample once, here, from the full pool — sectionCounts
+      // of 0 means "use everything" (pickRandom returns the whole array).
+      let examSelectedQuestionIds;
+      if (state.examConfig.selectionMode === "manual" && state.examConfig.manualQuestionIds.length) {
+        const manualSet = new Set(state.examConfig.manualQuestionIds);
+        examSelectedQuestionIds = activeQs.filter((q) => manualSet.has(q.id)).map((q) => q.id);
+      } else {
+        examSelectedQuestionIds = [];
+        fullSections.forEach((sec) => {
+          const n = state.examConfig.sectionCounts[sec.section] || 0;
+          pickRandom(sec.qs, n).forEach((q) => examSelectedQuestionIds.push(q.id));
+        });
+      }
+      // Safety net: never leave a candidate with an empty exam (e.g. a
+      // saved manual selection whose questions were later deactivated).
+      if (!examSelectedQuestionIds.length) examSelectedQuestionIds = activeQs.map((q) => q.id);
       const startSections = groupBySections(activeQs.filter((q) => examSelectedQuestionIds.includes(q.id)));
       const deadline = Date.now() + (state.examConfig.sectionMinutes[startSections[0].section] || 20) * 60000;
       await updateDoc(doc(db, "users", state.profile.id), {
@@ -1581,25 +1689,67 @@ function renderResult() {
   const p = state.profile;
   const wrap = el(`
     <div class="shell">
-      <div class="card center-card" id="result-card">
+      <div class="card center-card" id="result-summary">
         <h2>${L("yourResult")}</h2>
-        <p>${L("resultPending")}</p>
+        <p>${L("loading")}</p>
       </div>
+      <div id="result-review"></div>
     </div>
   `);
   getDoc(doc(db, "attempts", p.id)).then((snap) => {
     if (!snap.exists()) return;
     const a = snap.data();
-    const card = wrap.querySelector("#result-card");
-    if (a.needsManualGrading && a.examStatus !== "graded") {
-      card.innerHTML = `<h2>${L("yourResult")}</h2><p>${L("pendingGrading")}</p>`;
-      return;
-    }
+    const graded = a.examStatus === "graded";
+    const pendingManual = a.needsManualGrading && !graded;
     const total = (a.autoScore ?? a.score ?? 0) + (a.manualScore ?? 0);
-    card.innerHTML = `
+    wrap.querySelector("#result-summary").innerHTML = `
       <h2>${L("yourResult")}</h2>
       <p style="font-size:32px;font-weight:700;">${total} / ${a.totalPoints}</p>
+      ${pendingManual ? `<p class="hint">${L("pendingGrading")}</p>` : ""}
     `;
+
+    const review = wrap.querySelector("#result-review");
+    const answers = a.answers || {};
+    const manualAnswers = a.manualAnswers || {};
+    const manualScores = a.manualScores || {};
+
+    // Auto-graded (reading/listening): right/wrong per question, same
+    // right-answer logic used to score at submit time.
+    const autoQs = state.questions.filter((q) => q.id in answers);
+    if (autoQs.length) {
+      const card = el(`<div class="card"><h3>${L("autoScore")}</h3></div>`);
+      autoQs.forEach((q, i) => {
+        const given = answers[q.id];
+        const correct = q.type === "truefalse" ? q.correctAnswer : q.correctIndex;
+        const isRight = given === correct;
+        card.appendChild(el(`
+          <div class="review-row ${isRight ? "ok" : "bad"}">
+            <b>${i + 1}.</b> ${escapeHtml(q.text[qLang(q)] || q.text.ar)}
+          </div>
+        `));
+      });
+      review.appendChild(card);
+    }
+
+    // Speaking/writing: candidate's own submitted answer, with the score
+    // once an admin has graded it (or a pending note until then).
+    const manualQs = state.questions.filter((q) => (q.type === "speaking" || q.type === "writing") && q.id in manualAnswers);
+    if (manualQs.length) {
+      const card = el(`<div class="card"><h3>${L("manualGrading")}</h3></div>`);
+      manualQs.forEach((q, i) => {
+        const ans = manualAnswers[q.id];
+        const row = el(`<div class="review-row"></div>`);
+        row.appendChild(el(`<div><b>${i + 1}.</b> ${escapeHtml(q.text[qLang(q)] || q.text.ar)}</div>`));
+        if (q.type === "speaking") {
+          row.appendChild(ans?.audioUrl ? el(`<audio controls src="${ans.audioUrl}"></audio>`) : el(`<p class="hint">${L("noAnswerGiven")}</p>`));
+        } else {
+          row.appendChild(el(`<p class="writing-answer-view">${escapeHtml(ans?.text || "")}</p>`));
+        }
+        row.appendChild(el(`<p class="hint">${graded ? `${L("scoreOutOf", { max: q.points ?? 1 })}: ${manualScores[q.id] ?? 0}` : L("pendingGrading")}</p>`));
+        card.appendChild(row);
+      });
+      review.appendChild(card);
+    }
   });
   return wrap;
 }
@@ -1659,7 +1809,16 @@ async function loadMaterialAndRender(body) {
     pdfjsLib = await import("https://cdn.jsdelivr.net/npm/pdfjs-dist@4.6.82/build/pdf.min.mjs");
     pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.6.82/build/pdf.worker.min.mjs";
     if (!ADMIN_SERVER_URL) throw new Error(L("uploadServerMissing"));
-    materialPdfDoc = await pdfjsLib.getDocument(`${ADMIN_SERVER_URL}/material/${state.material.fileId}`).promise;
+    // disableRange/disableStream: our server proxies the PDF from Google
+    // Drive as a plain stream with no Content-Length (Drive doesn't give us
+    // the size upfront), so pdf.js's default range-request probing has
+    // nothing to measure progress against and just hangs forever with no
+    // error — this forces a single full fetch instead, which our proxy
+    // supports fine.
+    materialPdfDoc = await pdfjsLib.getDocument({
+      url: `${ADMIN_SERVER_URL}/material/${state.material.fileId}`,
+      disableRange: true, disableStream: true,
+    }).promise;
   } catch (err) {
     body.innerHTML = `<p class="err">${err.message}</p>`;
     return;

@@ -60,7 +60,15 @@ button.ghost { background: transparent; border: 1px solid var(--border); }
 button.link { background: none; padding: 4px 8px; text-decoration: underline; color: var(--primary); }
 button.link.danger { color: var(--bad); }
 button.link.warn { color: #a06600; }
+button.ghost.danger { color: var(--bad); border-color: var(--bad); }
 button:disabled { opacity: .5; cursor: not-allowed; }
+
+.manual-q-list { max-height: 420px; overflow-y: auto; border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; }
+.manual-q-section-h { font-size: 13px; color: var(--muted); margin: 12px 0 4px; }
+.manual-q-section-h:first-child { margin-top: 4px; }
+.manual-q-row { display: flex; align-items: flex-start; gap: 8px; padding: 6px 0; font-size: 14px; border-bottom: 1px dashed var(--border); }
+.manual-q-row:last-child { border-bottom: none; }
+.manual-q-row input { width: auto; margin-top: 3px; }
 
 .err { color: var(--bad); font-size: 13px; min-height: 18px; }
 .hint { color: var(--muted); font-size: 12px; margin: -6px 0 10px; }

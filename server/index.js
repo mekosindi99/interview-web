@@ -202,11 +202,17 @@ app.get("/oauth/callback", async (req, res) => {
 // firestore.rules) — the material is meant to be readable by every candidate.
 app.get("/material/:fileId", async (req, res) => {
   try {
+    // Fetch the size first so we can set Content-Length — without it,
+    // pdf.js (client sends disableRange/disableStream too, belt-and-braces)
+    // has nothing to measure a plain proxied stream's progress against and
+    // can hang indefinitely instead of erroring.
+    const meta = await drive.files.get({ fileId: req.params.fileId, fields: "size" });
     const driveRes = await drive.files.get(
       { fileId: req.params.fileId, alt: "media" },
       { responseType: "stream" }
     );
     res.setHeader("Content-Type", "application/pdf");
+    if (meta.data.size) res.setHeader("Content-Length", meta.data.size);
     driveRes.data.pipe(res);
   } catch (err) {
     console.error("material proxy failed", err);
