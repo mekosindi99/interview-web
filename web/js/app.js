@@ -781,6 +781,7 @@ function renderCandidatesTab() {
     <div>
       <button id="new-cand-btn" class="primary">${L("createCandidate")}</button>
       <button id="toggle-removed-btn" class="ghost">${showRemoved ? L("candidates") : L("removedCandidates")}</button>
+      ${state.profile.role === "admin" ? `<button id="reset-all-exams-btn" class="ghost danger">${L("resetAllExamsBtn")}</button>` : ""}
       <div id="new-cand-form"></div>
       <div class="row-actions" style="margin:12px 0">
         <select id="filter-status">
@@ -820,6 +821,8 @@ function renderCandidatesTab() {
     formHost.appendChild(renderNewCandidateForm());
   };
   toolbar.querySelector("#toggle-removed-btn").onclick = () => setState({ showRemovedCandidates: !showRemoved });
+  const resetAllBtn = toolbar.querySelector("#reset-all-exams-btn");
+  if (resetAllBtn) resetAllBtn.onclick = resetAllExamsBulk;
   const rows = toolbar.querySelector("#cand-rows");
   visible.forEach((c) => {
     const att = state.attempts[c.id];
@@ -859,6 +862,14 @@ function renderCandidatesTab() {
     const devicesBtn = el(`<button class="link">${L("viewDevices")}</button>`);
     devicesBtn.onclick = () => setState({ adminTab: "candidates", viewCandidateDevices: c.id });
     actions.appendChild(devicesBtn);
+    const historyBtn = el(`<button class="link">${L("examHistory")}</button>`);
+    historyBtn.onclick = () => setState({ adminTab: "candidates", viewCandidateHistory: c.id });
+    actions.appendChild(historyBtn);
+    if (state.profile.role === "admin" && c.examStatus && c.examStatus !== "not_started") {
+      const newExamBtn = el(`<button class="link warn">${L("newExam")}</button>`);
+      newExamBtn.onclick = () => resetCandidateExam(c);
+      actions.appendChild(newExamBtn);
+    }
     const blockBtn = el(`<button class="link warn">${c.blocked ? L("unblock") : L("block")}</button>`);
     blockBtn.onclick = async () => {
       const blocking = !c.blocked;
@@ -887,6 +898,86 @@ function renderCandidatesTab() {
     const c = state.candidates.find((x) => x.id === state.viewCandidateDevices);
     if (c) wrap.appendChild(renderCandidateDevicesPanel(c));
   }
+  if (state.viewCandidateHistory) {
+    const c = state.candidates.find((x) => x.id === state.viewCandidateHistory);
+    if (c) wrap.appendChild(renderCandidateHistoryPanel(c));
+  }
+  return wrap;
+}
+
+// Wipes exam data for EVERY candidate — current attempt, all archived
+// history, and progress fields — everywhere at once. Destructive and
+// irreversible, gated behind typing an exact confirmation word (not just a
+// yes/no dialog) since this can't be undone.
+async function resetAllExamsBulk() {
+  const CONFIRM_WORD = "تصفير";
+  const typed = prompt(L("resetAllExamsPrompt", { word: CONFIRM_WORD }));
+  if (typed === null) return;
+  if (typed.trim() !== CONFIRM_WORD) { alert(L("resetAllExamsCancelled")); return; }
+  const candidates = state.candidates.filter((c) => !c.deleted);
+  for (const c of candidates) {
+    try {
+      const pastSnap = await getDocs(collection(db, "users", c.id, "pastAttempts"));
+      await Promise.all(pastSnap.docs.map((d) => deleteDoc(d.ref)));
+      await deleteDoc(doc(db, "attempts", c.id)).catch(() => {});
+      await updateDoc(doc(db, "users", c.id), {
+        examStatus: "not_started",
+        examProgress: deleteField(), examManualProgress: deleteField(),
+        examSectionIndex: deleteField(), examQIndex: deleteField(),
+        examSectionDeadline: deleteField(), examStartedAtMs: deleteField(),
+        examSelectedQuestionIds: deleteField(),
+      }).catch(() => {});
+    } catch (err) {
+      console.warn(`reset failed for candidate ${c.id}`, err);
+    }
+  }
+  alert(L("resetAllExamsDone"));
+}
+
+// Archives the candidate's current attempt (if any) into pastAttempts, then
+// resets their profile so they can take the exam again from scratch — old
+// results survive as history instead of being silently overwritten.
+async function resetCandidateExam(c) {
+  if (!confirm(L("newExamConfirm", { name: c.name }))) return;
+  try {
+    const attemptSnap = await getDoc(doc(db, "attempts", c.id));
+    if (attemptSnap.exists()) {
+      await addDoc(collection(db, "users", c.id, "pastAttempts"), {
+        ...attemptSnap.data(), archivedAt: serverTimestamp(),
+      });
+      await deleteDoc(doc(db, "attempts", c.id));
+    }
+    await updateDoc(doc(db, "users", c.id), {
+      examStatus: "not_started",
+      examProgress: deleteField(), examManualProgress: deleteField(),
+      examSectionIndex: deleteField(), examQIndex: deleteField(),
+      examSectionDeadline: deleteField(), examStartedAtMs: deleteField(),
+      examSelectedQuestionIds: deleteField(),
+    });
+  } catch (err) {
+    alert(`${L("error")}: ${err.message}`);
+  }
+}
+
+function renderCandidateHistoryPanel(c) {
+  const wrap = el(`<div class="card"><h3>${escapeHtml(c.name)} — ${L("examHistory")}</h3><div id="history-body">${L("loading")}</div></div>`);
+  const localeMap = { ar: "ar-IQ-u-nu-latn", ku: "en-GB", en: "en-US" };
+  getDocs(query(collection(db, "users", c.id, "pastAttempts"), orderBy("archivedAt", "desc"))).then((snap) => {
+    const body = wrap.querySelector("#history-body");
+    body.innerHTML = "";
+    if (snap.empty) { body.textContent = L("noExamHistory"); return; }
+    snap.forEach((d) => {
+      const a = d.data();
+      const total = (a.autoScore ?? a.score ?? 0) + (a.manualScore ?? 0);
+      const archivedStr = a.archivedAt?.seconds ? new Date(a.archivedAt.seconds * 1000).toLocaleString(localeMap[state.lang]) : "—";
+      body.appendChild(el(`
+        <div class="history-card">
+          <div class="history-card-score">${total} / ${a.totalPoints ?? 0}</div>
+          <div class="hint">${L("archivedAtLabel")}: ${archivedStr}</div>
+        </div>
+      `));
+    });
+  });
   return wrap;
 }
 

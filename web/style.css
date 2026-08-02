@@ -67,6 +67,9 @@ button.link.warn { color: #a06600; }
 button.ghost.danger { color: var(--bad); border-color: var(--bad); }
 button:disabled { opacity: .5; cursor: not-allowed; }
 
+.history-card { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; margin-bottom: 8px; }
+.history-card-score { font-weight: 700; font-size: 16px; }
+
 .file-info-card { display: flex; align-items: center; gap: 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px; }
 .file-info-icon { font-size: 22px; flex-shrink: 0; }
 .file-info-name { font-weight: 600; font-size: 14px; }

@@ -57,6 +57,19 @@ service cloud.firestore {
         && !request.resource.data.diff(resource.data).affectedKeys()
               .hasAny(['manualScores', 'manualScore', 'gradedBy', 'gradedAt']);
       allow update: if isStaff();
+      // Admin-only, and only to reset a candidate for a retake — the
+      // attempt is archived into pastAttempts (below) by the client before
+      // this ever runs, so nothing is actually lost, just moved.
+      allow delete: if isAdmin();
+    }
+
+    // One archived attempt per past exam a candidate has taken — written
+    // by the admin client when resetting a candidate for a retake (copies
+    // the live attempts/{uid} doc here first), so old results survive as
+    // history instead of being overwritten by the next attempt.
+    match /users/{uid}/pastAttempts/{attemptId} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || isStaff());
+      allow create, delete: if isAdmin();
     }
 
     // Single shared docs: settings/examConfig (section timers) and
