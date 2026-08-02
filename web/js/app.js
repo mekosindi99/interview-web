@@ -876,6 +876,24 @@ function renderMaterialAdminTab() {
   return wrap;
 }
 
+// Mirrors an Arabic field's value into its EN/KU siblings as the admin
+// types, until EN/KU are edited by hand — lets admins skip manually typing
+// the same text three times when they don't need real per-language
+// wording, while still allowing a real translation to be typed in later.
+function wireAutoFill(arEl, enEl, kuEl) {
+  [enEl, kuEl].forEach((el) => {
+    if (!el.value || el.value === arEl.value) el.dataset.autoFilled = "1";
+    el.addEventListener("input", () => {
+      if (el.value !== arEl.value) delete el.dataset.autoFilled;
+    });
+  });
+  arEl.addEventListener("input", () => {
+    [enEl, kuEl].forEach((el) => {
+      if (el.dataset.autoFilled) el.value = arEl.value;
+    });
+  });
+}
+
 // Deterministic id for a seed question, derived from its content — lets the
 // "add sample questions" button be clicked repeatedly without ever
 // inserting duplicates (see renderQuestionsTab below).
@@ -1023,6 +1041,14 @@ function renderQuestionForm(existing) {
         <select name="category">${CATEGORIES.map((c) => `<option value="${c}">${L(c)}</option>`).join("")}</select>
       </label>
       <label>${L("points")}<input type="number" name="points" value="${existing?.points ?? 1}" min="1" /></label>
+      <label>${L("displayLang")}
+        <select name="displayLang">
+          <option value="">${L("displayLangAuto")}</option>
+          <option value="ar">${L("displayLangAr")}</option>
+          <option value="en">${L("displayLangEn")}</option>
+          <option value="ku">${L("displayLangKu")}</option>
+        </select>
+      </label>
       <label>${L("questionTextAr")}<input name="text_ar" required value="${escapeHtml(existing?.text?.ar || "")}" /></label>
       <label>${L("questionTextKu")}<input name="text_ku" value="${escapeHtml(existing?.text?.ku || "")}" /></label>
       <label>${L("questionTextEn")}<input name="text_en" value="${escapeHtml(existing?.text?.en || "")}" /></label>
@@ -1038,7 +1064,9 @@ function renderQuestionForm(existing) {
     typeSel.value = existing.type;
     sectionSel.value = existing.section || "reading";
     wrap.querySelector("[name=category]").value = existing.category || CATEGORIES[0];
+    wrap.querySelector("[name=displayLang]").value = existing.displayLang || "";
   }
+  wireAutoFill(wrap.querySelector("[name=text_ar]"), wrap.querySelector("[name=text_en]"), wrap.querySelector("[name=text_ku]"));
   function renderExtra() {
     extra.innerHTML = "";
     const type = typeSel.value;
@@ -1049,14 +1077,15 @@ function renderQuestionForm(existing) {
     }
     if (type === "mcq" || type === "image") {
       for (let i = 0; i < 4; i++) {
-        extra.appendChild(el(`
+        const optSet = el(`
           <fieldset class="opt-set">
             <legend>${L("options")} ${i + 1}</legend>
             <input name="opt_ar_${i}" placeholder="AR" />
             <input name="opt_ku_${i}" placeholder="KU" />
             <input name="opt_en_${i}" placeholder="EN" />
           </fieldset>
-        `));
+        `);
+        extra.appendChild(optSet);
       }
       extra.appendChild(el(`
         <label>${L("correctAnswer")}
@@ -1084,6 +1113,12 @@ function renderQuestionForm(existing) {
         const imgSel = extra.querySelector("[name=imagePath]");
         if (imgSel && existing.imagePath) imgSel.value = existing.imagePath;
       }
+      // Wired after any existing values are populated above, so editing an
+      // already-translated question doesn't mistake real translations for
+      // auto-filled placeholders.
+      for (let i = 0; i < 4; i++) {
+        wireAutoFill(extra.querySelector(`[name=opt_ar_${i}]`), extra.querySelector(`[name=opt_en_${i}]`), extra.querySelector(`[name=opt_ku_${i}]`));
+      }
     } else if (type === "truefalse") {
       extra.appendChild(el(`
         <label>${L("correctAnswer")}
@@ -1098,11 +1133,18 @@ function renderQuestionForm(existing) {
       }
     }
     if (section === "reading") {
-      extra.appendChild(el(`
-        <label>${L("passageAr")}<textarea name="passage_ar" rows="3">${escapeHtml(existing?.passage?.ar || "")}</textarea></label>
-        <label>${L("passageKu")}<textarea name="passage_ku" rows="3">${escapeHtml(existing?.passage?.ku || "")}</textarea></label>
-        <label>${L("passageEn")}<textarea name="passage_en" rows="3">${escapeHtml(existing?.passage?.en || "")}</textarea></label>
-      `));
+      // Wrapped in one <div> — el() only returns the FIRST of several
+      // sibling root elements, so without this wrapper the Ku/En passage
+      // fields below were silently never attached to the DOM at all.
+      const passageWrap = el(`
+        <div>
+          <label>${L("passageAr")}<textarea name="passage_ar" rows="3">${escapeHtml(existing?.passage?.ar || "")}</textarea></label>
+          <label>${L("passageKu")}<textarea name="passage_ku" rows="3">${escapeHtml(existing?.passage?.ku || "")}</textarea></label>
+          <label>${L("passageEn")}<textarea name="passage_en" rows="3">${escapeHtml(existing?.passage?.en || "")}</textarea></label>
+        </div>
+      `);
+      extra.appendChild(passageWrap);
+      wireAutoFill(passageWrap.querySelector("[name=passage_ar]"), passageWrap.querySelector("[name=passage_en]"), passageWrap.querySelector("[name=passage_ku]"));
     }
     if (section === "listening") {
       const audioWrap = el(`
@@ -1143,6 +1185,7 @@ function renderQuestionForm(existing) {
       section: f.get("section"),
       category: f.get("category"),
       points: Number(f.get("points")) || 1,
+      displayLang: f.get("displayLang") || null,
       text: { ar: f.get("text_ar"), ku: f.get("text_ku") || f.get("text_ar"), en: f.get("text_en") || f.get("text_ar") },
     };
     if (!existing) { data.active = true; data.createdAt = serverTimestamp(); }
@@ -1190,6 +1233,12 @@ let examTimerInterval = null;
 let speakingState = {};
 let mediaRecorder = null;
 let recordedChunks = [];
+
+// A question can force a specific display language for candidates
+// (q.displayLang), overriding whatever language they picked from the flag
+// switcher — used e.g. to keep a listening/reading question in one language
+// regardless of UI language. Falls back to the candidate's own language.
+function qLang(q) { return q.displayLang || state.lang; }
 
 function groupBySections(activeQs) {
   const order = state.examConfig.sectionOrder;
@@ -1273,9 +1322,9 @@ function renderExam() {
         · ${L("questionOf", { n: examQIndex + 1, total: curSection.qs.length })}
       </div>
       <div class="card q-card-big">
-        ${q.passage?.[state.lang] || q.passage?.ar ? `<div class="passage">${escapeHtml(q.passage[state.lang] || q.passage.ar)}</div>` : ""}
+        ${q.passage?.[qLang(q)] || q.passage?.ar ? `<div class="passage">${escapeHtml(q.passage[qLang(q)] || q.passage.ar)}</div>` : ""}
         ${q.audioPath ? `<audio class="q-audio" controls src="${q.audioPath}"></audio>` : ""}
-        <div class="q-text">${escapeHtml(q.text[state.lang] || q.text.ar)}</div>
+        <div class="q-text">${escapeHtml(q.text[qLang(q)] || q.text.ar)}</div>
         ${q.imagePath ? `<img class="q-image" src="${q.imagePath}" />` : ""}
         <div id="q-options"></div>
       </div>
@@ -1331,7 +1380,7 @@ function renderQuestionAnswerUI(optHost, q) {
   }
   const opts = q.type === "truefalse"
     ? [{ label: L("yes"), value: true }, { label: L("no"), value: false }]
-    : q.options.map((o, i) => ({ label: o[state.lang] || o.ar, value: i }));
+    : q.options.map((o, i) => ({ label: o[qLang(q)] || o.ar, value: i }));
   opts.forEach((o) => {
     const checked = examLocalAnswers[q.id] === o.value;
     const optEl = el(`<label class="option ${checked ? "picked" : ""}"><input type="radio" name="ans" ${checked ? "checked" : ""}/> ${escapeHtml(o.label)}</label>`);

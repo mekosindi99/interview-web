@@ -168,6 +168,11 @@ export const t = {
     noDuplicates: "ما فيه أسئلة مكرّرة.",
     removeDuplicatesConfirm: "راح يُحذف {n} سؤال مكرّر (يبقى نسخة وحدة من كل سؤال). متأكد؟",
     duplicatesRemoved: "تم حذف {n} سؤال مكرّر.",
+    displayLang: "لغة العرض للمرشح",
+    displayLangAuto: "تلقائي (حسب لغة المرشح)",
+    displayLangAr: "عربي دائماً",
+    displayLangEn: "إنجليزي دائماً",
+    displayLangKu: "كردي دائماً",
   },
   ku: {
     appName: "مقابلة",
@@ -324,6 +329,11 @@ export const t = {
     noDuplicates: "پرسیارێن دووبارە نینن.",
     removeDuplicatesConfirm: "{n} پرسیارێن دووبارە دێ ژێببن (تنێ یەک ژ هەر پرسیارێ دمینیت). پشتراستی؟",
     duplicatesRemoved: "{n} پرسیارێن دووبارە هاتنە ژێبرن.",
+    displayLang: "زمانێ نیشاندانێ بۆ داواکار",
+    displayLangAuto: "ب خۆیی (ب گوهرێ زمانێ داواکار)",
+    displayLangAr: "هەردەم عەرەبی",
+    displayLangEn: "هەردەم ئینگلیزی",
+    displayLangKu: "هەردەم کوردی",
   },
   en: {
     appName: "Interview",
@@ -482,6 +492,11 @@ export const t = {
     noDuplicates: "No duplicate questions found.",
     removeDuplicatesConfirm: "This will delete {n} duplicate question(s), keeping one copy of each. Continue?",
     duplicatesRemoved: "Removed {n} duplicate question(s).",
+    displayLang: "Language shown to candidates",
+    displayLangAuto: "Automatic (follows candidate's language)",
+    displayLangAr: "Always Arabic",
+    displayLangEn: "Always English",
+    displayLangKu: "Always Kurdish",
   },
 };
 
