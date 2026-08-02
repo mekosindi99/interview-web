@@ -9,7 +9,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import {
   getFirestore, doc, getDoc, setDoc, updateDoc, addDoc, deleteDoc,
-  collection, getDocs, query, where, orderBy, serverTimestamp, onSnapshot,
+  collection, getDocs, query, where, orderBy, serverTimestamp, onSnapshot, deleteField,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -1158,10 +1158,17 @@ function renderNewCoadminForm() {
 function renderMaterialAdminTab() {
   const isAdmin = state.profile.role === "admin";
   const wrap = el(`<div></div>`);
+  const m = state.material || {};
+  const hasPdf = !!m.fileId;
+  const hasImages = Array.isArray(m.images) && m.images.length > 0;
+  const mode = m.mode === "images" ? "images" : "pdf";
+
   if (isAdmin) {
+    // ---- PDF upload ----
     const form = el(`
       <form id="material-form" class="card">
-        <label>${L("uploadMaterial")}<input type="file" name="file" accept="application/pdf" required /></label>
+        <h3>${L("uploadMaterial")}</h3>
+        <label>${L("chooseFile")}<input type="file" name="file" accept="application/pdf" required /></label>
         <div class="err" id="material-err"></div>
         <button type="submit" class="primary">${L("save")}</button>
       </form>
@@ -1176,41 +1183,136 @@ function renderMaterialAdminTab() {
       try {
         const fileSize = file.size;
         const { fileId, fileName } = await uploadViaServer("/uploads/material", file);
-        await setDoc(doc(db, "settings", "material"), { fileId, fileName, fileSize, updatedAt: serverTimestamp() });
-        state.material = { fileId, fileName, fileSize, updatedAtMs: Date.now() };
+        const patch = { fileId, fileName, fileSize, updatedAt: serverTimestamp() };
+        if (!hasImages) patch.mode = "pdf"; // first content uploaded becomes the active mode
+        await setDoc(doc(db, "settings", "material"), patch, { merge: true });
+        state.material = { ...state.material, fileId, fileName, fileSize, updatedAtMs: Date.now(), mode: patch.mode || mode };
         setState({});
       } catch (err) {
         errBox.textContent = err.message;
       }
     };
     wrap.appendChild(form);
+
+    // ---- Images upload (alternative to the PDF — sturdier when a PDF's
+    // embedded font doesn't render correctly, since an image can't garble) ----
+    const imgForm = el(`
+      <form id="material-images-form" class="card">
+        <h3>${L("uploadMaterialImages")}</h3>
+        <p class="hint">${L("uploadMaterialImagesHint")}</p>
+        <label>${L("chooseFiles")}<input type="file" name="files" accept="image/*" multiple required /></label>
+        <div class="err" id="material-images-err"></div>
+        <button type="submit" class="primary">${L("save")}</button>
+      </form>
+    `);
+    imgForm.onsubmit = async (e) => {
+      e.preventDefault();
+      const input = imgForm.querySelector("[name=files]");
+      const files = [...input.files].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+      const errBox = imgForm.querySelector("#material-images-err");
+      errBox.textContent = L("uploadingFile");
+      errBox.classList.remove("notice");
+      try {
+        const fd = new FormData();
+        files.forEach((file) => fd.append("files", file));
+        const token = await state.user.getIdToken();
+        const res = await fetch(`${ADMIN_SERVER_URL}/uploads/material-images`, {
+          method: "POST", headers: { Authorization: `Bearer ${token}` }, body: fd,
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || res.statusText);
+        const patch = { images: body.images, imagesUpdatedAt: serverTimestamp() };
+        if (!hasPdf) patch.mode = "images";
+        await setDoc(doc(db, "settings", "material"), patch, { merge: true });
+        state.material = { ...state.material, images: body.images, imagesUpdatedAtMs: Date.now(), mode: patch.mode || mode };
+        setState({});
+      } catch (err) {
+        errBox.textContent = err.message;
+      }
+    };
+    wrap.appendChild(imgForm);
   }
-  const statusRow = el(`<div class="row-actions" style="align-items:center"></div>`);
-  statusRow.appendChild(state.material?.fileName ? renderFileInfoCard(state.material, state.lang) : el(`<p>${L("noMaterial")}</p>`));
-  if (isAdmin && state.material?.fileId) {
+
+  // ---- PDF status ----
+  const pdfRow = el(`<div class="row-actions" style="align-items:center"></div>`);
+  pdfRow.appendChild(hasPdf ? renderFileInfoCard(m, state.lang) : el(`<p>${L("noMaterial")}</p>`));
+  if (isAdmin && hasPdf) {
     const delBtn = el(`<button class="link danger">${L("deleteMaterial")}</button>`);
     delBtn.onclick = async () => {
       if (!confirm(L("deleteMaterialConfirm"))) return;
       delBtn.disabled = true;
       try {
         const token = await state.user.getIdToken();
-        const res = await fetch(`${ADMIN_SERVER_URL}/material/${state.material.fileId}`, {
-          method: "DELETE",
-          headers: { Authorization: `Bearer ${token}` },
+        const res = await fetch(`${ADMIN_SERVER_URL}/material/${m.fileId}`, {
+          method: "DELETE", headers: { Authorization: `Bearer ${token}` },
         });
         if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
-        // Clears it for EVERY candidate — they all read this one shared doc.
-        await deleteDoc(doc(db, "settings", "material"));
-        state.material = false;
+        const patch = { fileId: deleteField(), fileName: deleteField(), fileSize: deleteField() };
+        if (mode === "pdf" && hasImages) patch.mode = "images";
+        await updateDoc(doc(db, "settings", "material"), patch);
+        state.material = { ...state.material, fileId: null, fileName: null, fileSize: null, mode: patch.mode || state.material.mode };
         setState({});
       } catch (err) {
         alert(`${L("error")}: ${err.message}`);
         delBtn.disabled = false;
       }
     };
-    statusRow.appendChild(delBtn);
+    pdfRow.appendChild(delBtn);
   }
-  wrap.appendChild(statusRow);
+  wrap.appendChild(pdfRow);
+
+  // ---- Images status ----
+  const imagesRow = el(`<div class="row-actions" style="align-items:center"></div>`);
+  imagesRow.appendChild(el(`<p>${hasImages ? L("materialImagesCount", { n: m.images.length }) : L("noMaterialImages")}</p>`));
+  if (isAdmin && hasImages) {
+    const delImgsBtn = el(`<button class="link danger">${L("deleteMaterialImages")}</button>`);
+    delImgsBtn.onclick = async () => {
+      if (!confirm(L("deleteMaterialImagesConfirm"))) return;
+      delImgsBtn.disabled = true;
+      try {
+        const token = await state.user.getIdToken();
+        await fetch(`${ADMIN_SERVER_URL}/material-images`, {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ fileIds: m.images.map((im) => im.fileId) }),
+        });
+        const patch = { images: deleteField() };
+        if (mode === "images" && hasPdf) patch.mode = "pdf";
+        await updateDoc(doc(db, "settings", "material"), patch);
+        state.material = { ...state.material, images: null, mode: patch.mode || state.material.mode };
+        setState({});
+      } catch (err) {
+        alert(`${L("error")}: ${err.message}`);
+        delImgsBtn.disabled = false;
+      }
+    };
+    imagesRow.appendChild(delImgsBtn);
+  }
+  wrap.appendChild(imagesRow);
+
+  // ---- Active mode toggle (which one candidates actually see) ----
+  if (isAdmin && hasPdf && hasImages) {
+    const modeCard = el(`
+      <div class="card">
+        <h3>${L("materialActiveModeLabel")}</h3>
+        <div class="row-actions">
+          <button type="button" id="mode-pdf-btn" class="${mode === "pdf" ? "primary" : "ghost"}">${L("materialModePdf")}</button>
+          <button type="button" id="mode-images-btn" class="${mode === "images" ? "primary" : "ghost"}">${L("materialModeImages")}</button>
+        </div>
+      </div>
+    `);
+    modeCard.querySelector("#mode-pdf-btn").onclick = async () => {
+      await updateDoc(doc(db, "settings", "material"), { mode: "pdf" });
+      state.material = { ...state.material, mode: "pdf" };
+      setState({});
+    };
+    modeCard.querySelector("#mode-images-btn").onclick = async () => {
+      await updateDoc(doc(db, "settings", "material"), { mode: "images" });
+      state.material = { ...state.material, mode: "images" };
+      setState({});
+    };
+    wrap.appendChild(modeCard);
+  }
 
   const statsHost = el(`
     <div>
@@ -2074,6 +2176,13 @@ async function loadMaterialAndRender(body) {
   }
   if (!state.material) { body.innerHTML = `<p>${L("noMaterial")}</p>`; return; }
 
+  const hasImages = Array.isArray(state.material.images) && state.material.images.length > 0;
+  const hasPdf = !!state.material.fileId;
+  let mode = state.material.mode === "images" ? "images" : "pdf";
+  if (mode === "images" && !hasImages) mode = hasPdf ? "pdf" : null;
+  if (mode === "pdf" && !hasPdf) mode = hasImages ? "images" : null;
+  if (!mode) { body.innerHTML = `<p>${L("noMaterial")}</p>`; return; }
+
   body.innerHTML = `
     <div class="material-toolbar">
       <button id="prev-page">${L("prevPage")}</button>
@@ -2128,38 +2237,44 @@ async function loadMaterialAndRender(body) {
   window.addEventListener("afterprint", afterPrint);
 
   let pdfjsLib;
-  try {
-    pdfjsLib = await import("https://cdn.jsdelivr.net/npm/pdfjs-dist@4.6.82/build/pdf.min.mjs");
-    pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.6.82/build/pdf.worker.min.mjs";
-    if (!ADMIN_SERVER_URL) throw new Error(L("uploadServerMissing"));
-    // disableRange/disableStream: our server proxies the PDF from Google
-    // Drive as a plain stream with no Content-Length (Drive doesn't give us
-    // the size upfront), so pdf.js's default range-request probing has
-    // nothing to measure progress against and just hangs forever with no
-    // error — this forces a single full fetch instead, which our proxy
-    // supports fine.
-    // The proxy route now requires auth (was open-by-URL before, which let
-    // anyone with the fileId download the raw, un-watermarked PDF directly,
-    // bypassing the app entirely) — so the request needs the candidate's
-    // own ID token, same as the upload endpoints.
-    const token = await state.user.getIdToken();
-    // cMapUrl/standardFontDataUrl: without these, pdf.js can't substitute
-    // glyphs for fonts that aren't fully embedded in the PDF (common with
-    // Kurdish/Arabic-script documents) — text renders as garbled boxes
-    // instead of the real characters, which is exactly what was happening.
-    materialPdfDoc = await pdfjsLib.getDocument({
-      url: `${ADMIN_SERVER_URL}/material/${state.material.fileId}`,
-      httpHeaders: { Authorization: `Bearer ${token}` },
-      disableRange: true, disableStream: true,
-      cMapUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.6.82/cmaps/",
-      cMapPacked: true,
-      standardFontDataUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.6.82/standard_fonts/",
-    }).promise;
-  } catch (err) {
-    body.innerHTML = `<p class="err">${err.message}</p>`;
-    return;
+  if (mode === "pdf") {
+    try {
+      pdfjsLib = await import("https://cdn.jsdelivr.net/npm/pdfjs-dist@4.6.82/build/pdf.min.mjs");
+      pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.6.82/build/pdf.worker.min.mjs";
+      if (!ADMIN_SERVER_URL) throw new Error(L("uploadServerMissing"));
+      // disableRange/disableStream: our server proxies the PDF from Google
+      // Drive as a plain stream with no Content-Length (Drive doesn't give us
+      // the size upfront), so pdf.js's default range-request probing has
+      // nothing to measure progress against and just hangs forever with no
+      // error — this forces a single full fetch instead, which our proxy
+      // supports fine.
+      // The proxy route now requires auth (was open-by-URL before, which let
+      // anyone with the fileId download the raw, un-watermarked PDF directly,
+      // bypassing the app entirely) — so the request needs the candidate's
+      // own ID token, same as the upload endpoints.
+      const token = await state.user.getIdToken();
+      // cMapUrl/standardFontDataUrl: without these, pdf.js can't substitute
+      // glyphs for fonts that aren't fully embedded in the PDF (common with
+      // Kurdish/Arabic-script documents) — text renders as garbled boxes
+      // instead of the real characters. Even with these, some PDFs still
+      // don't render cleanly (embedded-font quirks pdf.js can't fix) — the
+      // image-pages mode above exists specifically as a reliable fallback.
+      materialPdfDoc = await pdfjsLib.getDocument({
+        url: `${ADMIN_SERVER_URL}/material/${state.material.fileId}`,
+        httpHeaders: { Authorization: `Bearer ${token}` },
+        disableRange: true, disableStream: true,
+        cMapUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.6.82/cmaps/",
+        cMapPacked: true,
+        standardFontDataUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.6.82/standard_fonts/",
+      }).promise;
+    } catch (err) {
+      body.innerHTML = `<p class="err">${err.message}</p>`;
+      return;
+    }
+    materialPageCount = materialPdfDoc.numPages;
+  } else {
+    materialPageCount = state.material.images.length;
   }
-  materialPageCount = materialPdfDoc.numPages;
   materialCurrentPage = 1;
   materialPagesTime = {};
   materialOpenedAt = Date.now();
@@ -2193,13 +2308,41 @@ async function loadMaterialAndRender(body) {
     }
     ctx.restore();
   }
+  // Decoded <img> elements cache per page (images mode only) — avoids
+  // re-fetching the same page's bytes from the server every time zoom
+  // changes triggers a re-render.
+  const imageElCache = {};
+  async function getImageEl(n) {
+    if (imageElCache[n]) return imageElCache[n];
+    const token = await state.user.getIdToken();
+    const fileId = state.material.images[n - 1].fileId;
+    const res = await fetch(`${ADMIN_SERVER_URL}/material-image/${fileId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+    const blobUrl = URL.createObjectURL(await res.blob());
+    const img = new Image();
+    await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = blobUrl; });
+    imageElCache[n] = img;
+    return img;
+  }
   async function renderPage(n) {
-    const page = await materialPdfDoc.getPage(n);
-    const viewport = page.getViewport({ scale: materialZoom });
-    canvas.width = viewport.width;
-    canvas.height = viewport.height;
     const ctx = canvas.getContext("2d");
-    await page.render({ canvasContext: ctx, viewport }).promise;
+    if (mode === "pdf") {
+      const page = await materialPdfDoc.getPage(n);
+      const viewport = page.getViewport({ scale: materialZoom });
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      await page.render({ canvasContext: ctx, viewport }).promise;
+    } else {
+      const img = await getImageEl(n);
+      // /1.3: materialZoom starts at 1.3 (the PDF path's "100%" baseline),
+      // so dividing keeps the same zoom-percent meaning across both modes.
+      const scale = materialZoom / 1.3;
+      canvas.width = img.naturalWidth * scale;
+      canvas.height = img.naturalHeight * scale;
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    }
     drawWatermark(ctx, canvas.width, canvas.height);
     label.textContent = L("pageOf", { n, total: materialPageCount });
     zoomLabel.textContent = `${Math.round(materialZoom / 1.3 * 100)}%`;

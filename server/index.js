@@ -210,6 +210,42 @@ app.post("/uploads/material", requireAdmin, upload.single("file"), async (req, r
   }
 });
 
+// Training-material pages as images — alternative to the PDF (some PDFs
+// have embedded fonts pdf.js can't substitute for and render garbled; a
+// straight image renders pixel-perfect regardless). Page ORDER is entirely
+// determined by req.files' array order, which multer preserves from the
+// order the client appended them to the FormData — the client is
+// responsible for sorting before upload, this just doesn't re-shuffle it.
+app.post("/uploads/material-images", requireAdmin, upload.array("files", 200), async (req, res) => {
+  try {
+    if (!req.files?.length) return res.status(400).json({ error: "no files" });
+    const results = await Promise.all(req.files.map(async (file, i) => {
+      const fileId = await uploadToDrive({
+        name: `material-page__${String(i + 1).padStart(3, "0")}__${file.originalname}`,
+        mimeType: file.mimetype || "image/jpeg", buffer: file.buffer,
+      });
+      return { fileId };
+    }));
+    res.json({ images: results });
+  } catch (err) {
+    console.error("material images upload failed", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Deletes a batch of material-page images from Drive (admin only) — used
+// when the admin replaces or clears the image set.
+app.delete("/material-images", requireAdmin, async (req, res) => {
+  try {
+    const fileIds = Array.isArray(req.body?.fileIds) ? req.body.fileIds : [];
+    await Promise.all(fileIds.map((id) => drive.files.delete({ fileId: id }).catch(() => {})));
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("material images delete failed", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── One-time OAuth bootstrap (see server/README.md) ──
 // Gated by a shared secret query param instead of a Firebase admin token
 // because this is a full-page browser redirect flow (Google's consent
@@ -269,6 +305,25 @@ app.get("/material/:fileId", requireSignedIn, async (req, res) => {
     driveRes.data.pipe(res);
   } catch (err) {
     console.error("material proxy failed", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Same idea as the PDF proxy above, for a single material-page image —
+// authenticated (not a public Drive URL) so images stay behind a login,
+// same as the PDF and everything else here.
+app.get("/material-image/:fileId", requireSignedIn, async (req, res) => {
+  try {
+    const meta = await drive.files.get({ fileId: req.params.fileId, fields: "size,mimeType" });
+    const driveRes = await drive.files.get(
+      { fileId: req.params.fileId, alt: "media" },
+      { responseType: "stream" }
+    );
+    res.setHeader("Content-Type", meta.data.mimeType || "image/jpeg");
+    if (meta.data.size) res.setHeader("Content-Length", meta.data.size);
+    driveRes.data.pipe(res);
+  } catch (err) {
+    console.error("material image proxy failed", err);
     res.status(500).json({ error: err.message });
   }
 });
