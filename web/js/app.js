@@ -694,13 +694,15 @@ function renderCandidatesTab() {
           <option value="durationAsc">${L("sortDurationAsc")}</option>
         </select>
       </div>
-      <table class="grid">
-        <thead><tr>
-          <th>${L("name")}</th><th>${L("phone")}</th><th>${L("password")}</th>
-          <th>${L("status")}</th><th>${L("score")}</th><th>${L("examDurationLabel")}</th><th></th>
-        </tr></thead>
-        <tbody id="cand-rows"></tbody>
-      </table>
+      <div class="table-scroll">
+        <table class="grid">
+          <thead><tr>
+            <th>${L("name")}</th><th>${L("phone")}</th><th>${L("password")}</th>
+            <th>${L("status")}</th><th>${L("score")}</th><th>${L("examDurationLabel")}</th><th></th>
+          </tr></thead>
+          <tbody id="cand-rows"></tbody>
+        </table>
+      </div>
     </div>
   `);
   toolbar.querySelector("#filter-status").value = filterStatus;
@@ -928,10 +930,12 @@ function renderCoadminsTab() {
     <div>
       <button id="new-coadmin-btn" class="primary">${L("addCoadmin")}</button>
       <div id="new-coadmin-form"></div>
-      <table class="grid">
-        <thead><tr><th>${L("name")}</th><th>${L("phone")}</th><th>${L("password")}</th><th></th></tr></thead>
-        <tbody id="coadmin-rows"><tr><td colspan="4">${L("loading")}</td></tr></tbody>
-      </table>
+      <div class="table-scroll">
+        <table class="grid">
+          <thead><tr><th>${L("name")}</th><th>${L("phone")}</th><th>${L("password")}</th><th></th></tr></thead>
+          <tbody id="coadmin-rows"><tr><td colspan="4">${L("loading")}</td></tr></tbody>
+        </table>
+      </div>
     </div>
   `);
   wrap.querySelector("#new-coadmin-btn").onclick = () => {
@@ -1037,10 +1041,12 @@ function renderMaterialAdminTab() {
   const statsHost = el(`
     <div>
       <h3>${L("materialStats")}</h3>
-      <table class="grid">
-        <thead><tr><th>${L("name")}</th><th>${L("sessionsCount")}</th><th>${L("totalTime")}</th><th>${L("maxPageReached")}</th><th>${L("lastRead")}</th></tr></thead>
-        <tbody id="material-stats-rows"><tr><td colspan="5">${L("loading")}</td></tr></tbody>
-      </table>
+      <div class="table-scroll">
+        <table class="grid">
+          <thead><tr><th>${L("name")}</th><th>${L("sessionsCount")}</th><th>${L("totalTime")}</th><th>${L("maxPageReached")}</th><th>${L("lastRead")}</th></tr></thead>
+          <tbody id="material-stats-rows"><tr><td colspan="5">${L("loading")}</td></tr></tbody>
+        </table>
+      </div>
     </div>
   `);
   wrap.appendChild(statsHost);
@@ -1876,6 +1882,7 @@ let materialPagesTime = {};
 let materialPageStartTs = 0;
 let materialOpenedAt = 0;
 let materialAutosaveInterval = null;
+let materialZoom = 1.3;
 
 function renderMaterialViewer() {
   const wrap = el(`
@@ -1904,12 +1911,34 @@ async function loadMaterialAndRender(body) {
       <span id="page-label"></span>
       <button id="next-page">${L("nextPage")}</button>
     </div>
-    <div class="pdf-canvas-wrap"><canvas id="pdf-canvas"></canvas></div>
+    <div class="material-toolbar">
+      <button id="zoom-out" type="button">−</button>
+      <span id="zoom-label"></span>
+      <button id="zoom-in" type="button">+</button>
+    </div>
+    <p class="hint" style="text-align:center">${L("noScreenshotHint")}</p>
+    <div class="pdf-canvas-wrap" id="pdf-canvas-wrap"><canvas id="pdf-canvas"></canvas></div>
   `;
   const prevBtn = body.querySelector("#prev-page");
   const nextBtn = body.querySelector("#next-page");
   const label = body.querySelector("#page-label");
+  const zoomOutBtn = body.querySelector("#zoom-out");
+  const zoomInBtn = body.querySelector("#zoom-in");
+  const zoomLabel = body.querySelector("#zoom-label");
+  const canvasWrap = body.querySelector("#pdf-canvas-wrap");
   const canvas = body.querySelector("#pdf-canvas");
+
+  // Best-effort deterrents only — no web page can actually block a device's
+  // screenshot/screen-recording capability (that needs a native app API).
+  // This just makes casual copying/printing harder and traceable.
+  canvasWrap.oncontextmenu = (e) => e.preventDefault();
+  canvasWrap.style.userSelect = "none";
+  const blurOnHide = () => { canvasWrap.style.filter = document.hidden ? "blur(20px)" : ""; };
+  document.addEventListener("visibilitychange", blurOnHide);
+  const beforePrint = () => { canvasWrap.style.visibility = "hidden"; };
+  const afterPrint = () => { canvasWrap.style.visibility = "visible"; };
+  window.addEventListener("beforeprint", beforePrint);
+  window.addEventListener("afterprint", afterPrint);
 
   let pdfjsLib;
   try {
@@ -1943,13 +1972,37 @@ async function loadMaterialAndRender(body) {
   });
   materialSessionId = sessionRef.id;
 
+  // Watermark: tiled, rotated, semi-transparent candidate name+phone over
+  // the page — doesn't stop a screenshot (nothing can), but makes any leaked
+  // copy traceable back to who took it.
+  function drawWatermark(ctx, w, h) {
+    const text = `${state.profile.name || ""}  ${state.profile.phone || ""}`.trim();
+    if (!text) return;
+    ctx.save();
+    ctx.globalAlpha = 0.12;
+    ctx.fillStyle = "#000";
+    ctx.font = "16px sans-serif";
+    ctx.translate(w / 2, h / 2);
+    ctx.rotate(-Math.PI / 6);
+    ctx.translate(-w / 2, -h / 2);
+    const stepX = 220, stepY = 120;
+    for (let y = -h; y < h * 2; y += stepY) {
+      for (let x = -w; x < w * 2; x += stepX) {
+        ctx.fillText(text, x, y);
+      }
+    }
+    ctx.restore();
+  }
   async function renderPage(n) {
     const page = await materialPdfDoc.getPage(n);
-    const viewport = page.getViewport({ scale: 1.3 });
+    const viewport = page.getViewport({ scale: materialZoom });
     canvas.width = viewport.width;
     canvas.height = viewport.height;
-    await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+    const ctx = canvas.getContext("2d");
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    drawWatermark(ctx, canvas.width, canvas.height);
     label.textContent = L("pageOf", { n, total: materialPageCount });
+    zoomLabel.textContent = `${Math.round(materialZoom / 1.3 * 100)}%`;
     prevBtn.disabled = n <= 1;
     nextBtn.disabled = n >= materialPageCount;
   }
@@ -1972,6 +2025,26 @@ async function loadMaterialAndRender(body) {
     await renderPage(materialCurrentPage);
     saveMaterialProgress();
   };
+  const MIN_ZOOM = 0.7, MAX_ZOOM = 3.5;
+  zoomInBtn.onclick = () => { materialZoom = Math.min(MAX_ZOOM, materialZoom + 0.25); renderPage(materialCurrentPage); };
+  zoomOutBtn.onclick = () => { materialZoom = Math.max(MIN_ZOOM, materialZoom - 0.25); renderPage(materialCurrentPage); };
+
+  // Pinch-to-zoom on touch devices.
+  let pinchStartDist = 0, pinchStartZoom = materialZoom;
+  const touchDist = (touches) => Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+  canvasWrap.addEventListener("touchstart", (e) => {
+    if (e.touches.length === 2) { pinchStartDist = touchDist(e.touches); pinchStartZoom = materialZoom; }
+  }, { passive: true });
+  canvasWrap.addEventListener("touchmove", (e) => {
+    if (e.touches.length === 2 && pinchStartDist) {
+      e.preventDefault();
+      const scale = touchDist(e.touches) / pinchStartDist;
+      materialZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, pinchStartZoom * scale));
+      renderPage(materialCurrentPage);
+    }
+  }, { passive: false });
+  canvasWrap.addEventListener("touchend", (e) => { if (e.touches.length < 2) pinchStartDist = 0; });
+
   await renderPage(1);
 
   if (materialAutosaveInterval) clearInterval(materialAutosaveInterval);

@@ -20,7 +20,8 @@ body {
   min-height: 100vh;
 }
 
-#app { max-width: 960px; margin: 0 auto; padding: 16px; }
+#app { max-width: 960px; margin: 0 auto; padding: 16px; overflow-x: hidden; }
+img, canvas, svg, video, audio { max-width: 100%; }
 
 .lang-row { display: flex; align-items: center; gap: 8px; justify-content: flex-end; margin-bottom: 12px; }
 .logout-flag-btn { margin-inline-end: auto; }
@@ -107,8 +108,10 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .tabs button { background: var(--card); border: 1px solid var(--border); }
 .tabs button.active { background: var(--primary); color: #fff; border-color: var(--primary); }
 
-table.grid { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 12px; overflow: hidden; }
-table.grid th, table.grid td { padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 14px; text-align: start; }
+.table-scroll { overflow-x: auto; border-radius: 12px; margin-bottom: 16px; -webkit-overflow-scrolling: touch; }
+.table-scroll table.grid { margin-bottom: 0; }
+table.grid { width: 100%; min-width: 560px; border-collapse: collapse; background: var(--card); border-radius: 12px; overflow: hidden; }
+table.grid th, table.grid td { padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 14px; text-align: start; white-space: nowrap; }
 table.grid th { background: #fafafa; color: var(--muted); font-weight: 600; }
 .row-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 table.grid .mono { font-family: "Courier New", monospace; letter-spacing: .5px; }
@@ -148,6 +151,20 @@ table.grid .mono { font-family: "Courier New", monospace; letter-spacing: .5px; 
   .topbar { flex-direction: column; align-items: stretch; text-align: center; }
 }
 
+@media (max-width: 480px) {
+  #app { padding: 12px; }
+  .card { padding: 14px; }
+  .center-card { margin: 20px auto; }
+  h1 { font-size: 19px; }
+  h2 { font-size: 16px; }
+  .lang-row { flex-wrap: wrap; row-gap: 8px; }
+  .opt-set { flex-direction: column; }
+  .row-actions button, .row-actions select { flex: 1 1 auto; }
+  .stat-box { min-width: calc(50% - 6px); }
+  .score-chart-lbl { width: 52px; font-size: 11px; }
+  .exam-nav { flex-direction: row; }
+}
+
 /* ---------- TOEFL sections: passage/audio, timer, recorder, writing ---------- */
 .section-tag { background: #eef7f0; color: var(--ok); }
 
@@ -184,5 +201,6 @@ table.grid .mono { font-family: "Courier New", monospace; letter-spacing: .5px; 
 .material-toolbar {
   display: flex; align-items: center; justify-content: center; gap: 16px; margin-bottom: 10px;
 }
-.pdf-canvas-wrap { overflow: auto; max-height: 75vh; display: flex; justify-content: center; }
-.pdf-canvas-wrap canvas { max-width: 100%; border: 1px solid var(--border); border-radius: 8px; }
+.pdf-canvas-wrap { overflow: auto; max-height: 75vh; display: flex; justify-content: center; touch-action: none; transition: filter .2s; }
+.pdf-canvas-wrap canvas { max-width: none; border: 1px solid var(--border); border-radius: 8px; }
+#zoom-label { min-width: 44px; text-align: center; color: var(--muted); font-size: 13px; }
