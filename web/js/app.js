@@ -2333,7 +2333,16 @@ let materialPagesTime = {};
 let materialPageStartTs = 0;
 let materialOpenedAt = 0;
 let materialAutosaveInterval = null;
-let materialZoom = 1.3;
+// 1 = fit the page to the viewer's width (see availWidth in renderPage).
+let materialZoom = 1;
+// Teardown callbacks for one viewing session (event listeners, blob URLs).
+// Without these, every re-open stacked another set of window/document
+// listeners closing over stale DOM, and leaked every page's object URL.
+let materialCleanups = [];
+function runMaterialCleanups() {
+  materialCleanups.forEach((fn) => { try { fn(); } catch {} });
+  materialCleanups = [];
+}
 
 function renderMaterialViewer() {
   const wrap = el(`
@@ -2350,6 +2359,9 @@ function renderMaterialViewer() {
 }
 
 async function loadMaterialAndRender(body) {
+  // Safety net in case the viewer is re-entered without the back button
+  // (which is what normally triggers stopMaterialTracking).
+  runMaterialCleanups();
   if (state.material == null) {
     const snap = await getDoc(doc(db, "settings", "material"));
     state.material = snap.exists() ? snap.data() : false;
@@ -2360,7 +2372,7 @@ async function loadMaterialAndRender(body) {
   // from a previous viewing session (e.g. someone zoomed out once, and
   // every later open started back at that same reduced zoom instead of a
   // fresh 100%) — reset it every time the viewer opens.
-  materialZoom = 1.3;
+  materialZoom = 1;
 
   const hasImages = Array.isArray(state.material.images) && state.material.images.length > 0;
   const hasPdf = !!state.material.fileId;
@@ -2381,7 +2393,13 @@ async function loadMaterialAndRender(body) {
       <button id="zoom-in" type="button">+</button>
     </div>
     <p class="hint" style="text-align:center">${L("noScreenshotHint")}</p>
-    <div class="pdf-canvas-wrap" id="pdf-canvas-wrap"><canvas id="pdf-canvas"></canvas></div>
+    <div class="pdf-canvas-wrap" id="pdf-canvas-wrap">
+      <div class="page-stage" id="page-stage">
+        <canvas id="pdf-canvas"></canvas>
+        <img id="page-img" alt="" />
+        <div class="wm-overlay" id="wm-overlay"></div>
+      </div>
+    </div>
   `;
   const prevBtn = body.querySelector("#prev-page");
   const nextBtn = body.querySelector("#next-page");
@@ -2390,7 +2408,13 @@ async function loadMaterialAndRender(body) {
   const zoomInBtn = body.querySelector("#zoom-in");
   const zoomLabel = body.querySelector("#zoom-label");
   const canvasWrap = body.querySelector("#pdf-canvas-wrap");
+  const stage = body.querySelector("#page-stage");
   const canvas = body.querySelector("#pdf-canvas");
+  const pageImg = body.querySelector("#page-img");
+  const wmOverlay = body.querySelector("#wm-overlay");
+  // Only one of the two page elements is ever visible, depending on mode.
+  canvas.style.display = mode === "pdf" ? "block" : "none";
+  pageImg.style.display = mode === "images" ? "block" : "none";
 
   // Best-effort deterrents only — no web page can actually block a device's
   // screenshot/screen-recording capability (that needs a native app API).
@@ -2421,6 +2445,11 @@ async function loadMaterialAndRender(body) {
   const afterPrint = () => { canvasWrap.style.visibility = "visible"; };
   window.addEventListener("beforeprint", beforePrint);
   window.addEventListener("afterprint", afterPrint);
+  materialCleanups.push(() => {
+    document.removeEventListener("visibilitychange", onVisibilityChange);
+    window.removeEventListener("beforeprint", beforePrint);
+    window.removeEventListener("afterprint", afterPrint);
+  });
 
   let pdfjsLib;
   if (mode === "pdf") {
@@ -2473,67 +2502,64 @@ async function loadMaterialAndRender(body) {
   });
   materialSessionId = sessionRef.id;
 
-  // Watermark: tiled, rotated, semi-transparent candidate name+phone over
-  // the page — doesn't stop a screenshot (nothing can), but makes any leaked
-  // copy traceable back to who took it.
-  function drawWatermark(ctx, w, h) {
+  // Watermark: tiled, rotated, faint candidate name+phone laid over the page
+  // as a CSS overlay rather than painted into the canvas. Keeping it out of
+  // the bitmap means the page itself can be rendered/scaled at full quality
+  // (see renderPage) — it doesn't stop a screenshot (nothing can), it just
+  // makes any leaked copy traceable back to who took it.
+  (function buildWatermark() {
     const text = `${state.profile.name || ""}  ${state.profile.phone || ""}`.trim();
     if (!text) return;
-    ctx.save();
-    ctx.globalAlpha = 0.12;
-    ctx.fillStyle = "#000";
-    ctx.font = "16px sans-serif";
-    ctx.translate(w / 2, h / 2);
-    ctx.rotate(-Math.PI / 6);
-    ctx.translate(-w / 2, -h / 2);
-    const stepX = 220, stepY = 120;
-    for (let y = -h; y < h * 2; y += stepY) {
-      for (let x = -w; x < w * 2; x += stepX) {
-        ctx.fillText(text, x, y);
-      }
-    }
-    ctx.restore();
-  }
-  // Decoded <img> elements cache per page (images mode only) — avoids
-  // re-fetching the same page's bytes from the server every time zoom
-  // changes triggers a re-render.
-  const imageElCache = {};
-  async function getImageEl(n) {
-    if (imageElCache[n]) return imageElCache[n];
+    wmOverlay.innerHTML = Array.from({ length: 120 }, () =>
+      `<span class="wm-item">${escapeHtml(text)}</span>`).join("");
+  })();
+
+  // Page images are fetched once and cached as object URLs. They're shown in
+  // a real <img> (not drawn into a canvas): the browser downscales a
+  // 2500px-wide scan to phone width far better than canvas drawImage does,
+  // and handles the device's pixel ratio for free. Canvas downscaling was
+  // what turned the Kurdish text into unreadable mush.
+  const imageUrlCache = {};
+  async function getImageUrl(n) {
+    if (imageUrlCache[n]) return imageUrlCache[n];
     const token = await state.user.getIdToken();
     const fileId = state.material.images[n - 1].fileId;
     const res = await fetch(`${ADMIN_SERVER_URL}/material-image/${fileId}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
-    const blobUrl = URL.createObjectURL(await res.blob());
-    const img = new Image();
-    await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = blobUrl; });
-    imageElCache[n] = img;
-    return img;
+    imageUrlCache[n] = URL.createObjectURL(await res.blob());
+    return imageUrlCache[n];
   }
+
+  // Width available for a page at 100% zoom — "100%" means fit-to-width,
+  // which is what makes sense on a phone, instead of an arbitrary fixed scale.
+  const availWidth = () => Math.max(200, canvasWrap.clientWidth || 320);
+
   async function renderPage(n) {
-    const ctx = canvas.getContext("2d");
     if (mode === "pdf") {
       const page = await materialPdfDoc.getPage(n);
-      const viewport = page.getViewport({ scale: materialZoom });
+      const unscaled = page.getViewport({ scale: 1 });
+      const cssScale = (availWidth() / unscaled.width) * materialZoom;
+      // Render the bitmap at the device's real pixel density (capped at 3 so
+      // huge pages don't blow up memory), then size it back down in CSS.
+      // Without this the canvas is rendered at 1x and looks blurry on every
+      // modern phone screen (which are 2x-3x).
+      const dpr = Math.min(window.devicePixelRatio || 1, 3);
+      const viewport = page.getViewport({ scale: cssScale * dpr });
       canvas.width = viewport.width;
       canvas.height = viewport.height;
-      await page.render({ canvasContext: ctx, viewport }).promise;
+      canvas.style.width = `${viewport.width / dpr}px`;
+      canvas.style.height = `${viewport.height / dpr}px`;
+      await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
     } else {
-      const img = await getImageEl(n);
-      // /1.3: materialZoom starts at 1.3 (the PDF path's "100%" baseline),
-      // so dividing keeps the same zoom-percent meaning across both modes.
-      const scale = materialZoom / 1.3;
-      canvas.width = img.naturalWidth * scale;
-      canvas.height = img.naturalHeight * scale;
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = "high";
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      const url = await getImageUrl(n);
+      if (pageImg.src !== url) pageImg.src = url;
+      pageImg.style.width = `${availWidth() * materialZoom}px`;
+      pageImg.style.height = "auto";
     }
-    drawWatermark(ctx, canvas.width, canvas.height);
     label.textContent = L("pageOf", { n, total: materialPageCount });
-    zoomLabel.textContent = `${Math.round(materialZoom / 1.3 * 100)}%`;
+    zoomLabel.textContent = `${Math.round(materialZoom * 100)}%`;
     prevBtn.disabled = n <= 1;
     nextBtn.disabled = n >= materialPageCount;
   }
@@ -2556,9 +2582,17 @@ async function loadMaterialAndRender(body) {
     await renderPage(materialCurrentPage);
     saveMaterialProgress();
   };
-  const MIN_ZOOM = 0.7, MAX_ZOOM = 3.5;
+  // 1 = fit-to-width, so allowing below that would only add empty margins.
+  const MIN_ZOOM = 1, MAX_ZOOM = 4;
   zoomInBtn.onclick = () => { materialZoom = Math.min(MAX_ZOOM, materialZoom + 0.25); renderPage(materialCurrentPage); };
   zoomOutBtn.onclick = () => { materialZoom = Math.max(MIN_ZOOM, materialZoom - 0.25); renderPage(materialCurrentPage); };
+  // Re-fit on rotate/resize, since "100%" is defined by the viewer's width.
+  const onResize = () => renderPage(materialCurrentPage);
+  window.addEventListener("resize", onResize);
+  materialCleanups.push(() => {
+    window.removeEventListener("resize", onResize);
+    Object.values(imageUrlCache).forEach((u) => URL.revokeObjectURL(u));
+  });
 
   // Pinch-to-zoom on touch devices.
   let pinchStartDist = 0, pinchStartZoom = materialZoom;
@@ -2597,6 +2631,7 @@ function saveMaterialProgress() {
 function stopMaterialTracking() {
   if (materialAutosaveInterval) { clearInterval(materialAutosaveInterval); materialAutosaveInterval = null; }
   window.removeEventListener("beforeunload", saveMaterialProgress);
+  runMaterialCleanups();
   if (materialSessionId) {
     saveMaterialProgress();
     updateDoc(doc(db, "materialSessions", materialSessionId), { closedAt: serverTimestamp() }).catch(() => {});
