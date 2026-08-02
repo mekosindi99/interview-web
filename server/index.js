@@ -249,7 +249,11 @@ app.get("/oauth/callback", async (req, res) => {
 // (no Access-Control-Allow-Origin header). Open to any signed-in user
 // (matches the "read: if isSignedIn()" rule on settings/material in
 // firestore.rules) — the material is meant to be readable by every candidate.
-app.get("/material/:fileId", async (req, res) => {
+// requireSignedIn (not open) — without this, anyone who learns/guesses the
+// fileId could fetch the raw, un-watermarked PDF directly by URL, bypassing
+// the app (and the watermark, which is only ever drawn client-side onto
+// the canvas, never baked into the file itself).
+app.get("/material/:fileId", requireSignedIn, async (req, res) => {
   try {
     // Fetch the size first so we can set Content-Length — without it,
     // pdf.js (client sends disableRange/disableStream too, belt-and-braces)

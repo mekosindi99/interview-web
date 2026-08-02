@@ -2019,8 +2019,14 @@ async function loadMaterialAndRender(body) {
     // nothing to measure progress against and just hangs forever with no
     // error — this forces a single full fetch instead, which our proxy
     // supports fine.
+    // The proxy route now requires auth (was open-by-URL before, which let
+    // anyone with the fileId download the raw, un-watermarked PDF directly,
+    // bypassing the app entirely) — so the request needs the candidate's
+    // own ID token, same as the upload endpoints.
+    const token = await state.user.getIdToken();
     materialPdfDoc = await pdfjsLib.getDocument({
       url: `${ADMIN_SERVER_URL}/material/${state.material.fileId}`,
+      httpHeaders: { Authorization: `Bearer ${token}` },
       disableRange: true, disableStream: true,
     }).promise;
   } catch (err) {

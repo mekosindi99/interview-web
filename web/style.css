@@ -8,7 +8,7 @@
   --ok: #1a8a4a;
   --bad: #c0392b;
   --border: #e3e5ea;
-  font-family: "Segoe UI", Tahoma, "Noto Sans Arabic", "Noto Naskh Arabic", sans-serif;
+  font-family: "Cairo", "Segoe UI", Tahoma, "Noto Sans Arabic", "Noto Naskh Arabic", sans-serif;
 }
 
 * { box-sizing: border-box; }
