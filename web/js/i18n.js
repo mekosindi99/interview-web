@@ -1,7 +1,7 @@
 // UI chrome translations. Question content is stored per-question in
 // {ar, ku, en} fields (see questions.js) — this file only covers the
 // interface labels/buttons/messages.
-export const LANGS = ["ar", "ku", "en"];
+export const LANGS = ["ar", "ku"];
 
 export const DIR = { ar: "rtl", ku: "rtl", en: "ltr" };
 
