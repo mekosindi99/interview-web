@@ -164,6 +164,10 @@ export const t = {
     backToExam: "رجوع",
     uploadingFile: "جاري رفع الملف...",
     uploadServerMissing: "رفع الملفات غير متاح: سيرفر الرفع (server/) غير مربوط — أضف رابطه بـ firebase-config.js.",
+    removeDuplicates: "حذف الأسئلة المكرّرة",
+    noDuplicates: "ما فيه أسئلة مكرّرة.",
+    removeDuplicatesConfirm: "راح يُحذف {n} سؤال مكرّر (يبقى نسخة وحدة من كل سؤال). متأكد؟",
+    duplicatesRemoved: "تم حذف {n} سؤال مكرّر.",
   },
   ku: {
     appName: "مقابلة",
@@ -316,6 +320,10 @@ export const t = {
     backToExam: "ڤەگەڕ",
     uploadingFile: "بارکرنا فایلی...",
     uploadServerMissing: "بارکرنا فایلان ئامادە نینه: سیرڤەرێ بارکرنێ (server/) نەهاتیە گرێدان.",
+    removeDuplicates: "ژێبرنا پرسیارێن دووبارە",
+    noDuplicates: "پرسیارێن دووبارە نینن.",
+    removeDuplicatesConfirm: "{n} پرسیارێن دووبارە دێ ژێببن (تنێ یەک ژ هەر پرسیارێ دمینیت). پشتراستی؟",
+    duplicatesRemoved: "{n} پرسیارێن دووبارە هاتنە ژێبرن.",
   },
   en: {
     appName: "Interview",
@@ -470,6 +478,10 @@ export const t = {
     backToExam: "Back",
     uploadingFile: "Uploading file...",
     uploadServerMissing: "File uploads unavailable: the upload server (server/) isn't wired up — add its URL to firebase-config.js.",
+    removeDuplicates: "Remove duplicate questions",
+    noDuplicates: "No duplicate questions found.",
+    removeDuplicatesConfirm: "This will delete {n} duplicate question(s), keeping one copy of each. Continue?",
+    duplicatesRemoved: "Removed {n} duplicate question(s).",
   },
 };
 

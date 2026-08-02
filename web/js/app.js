@@ -876,6 +876,16 @@ function renderMaterialAdminTab() {
   return wrap;
 }
 
+// Deterministic id for a seed question, derived from its content — lets the
+// "add sample questions" button be clicked repeatedly without ever
+// inserting duplicates (see renderQuestionsTab below).
+function seedDocId(q) {
+  const s = `${q.type}|${q.category}|${q.text?.ar || ""}`;
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+  return `seed-${h.toString(36)}`;
+}
+
 // ---------- Questions tab (admin only can edit; coadmin read-only) ----------
 function renderQuestionsTab() {
   const isAdmin = state.profile.role === "admin";
@@ -884,13 +894,48 @@ function renderQuestionsTab() {
     const seedBtn = el(`<button class="ghost">${L("seedSample")}</button>`);
     seedBtn.onclick = async () => {
       seedBtn.disabled = true;
-      for (const q of seedQuestions) {
-        await addDoc(collection(db, "questions"), { section: "reading", ...q, active: true, createdAt: serverTimestamp() });
+      try {
+        for (const q of seedQuestions) {
+          // Stable, content-derived id (not a random addDoc id) so clicking
+          // this button again re-writes the same docs instead of inserting
+          // duplicates every time.
+          await setDoc(doc(db, "questions", seedDocId(q)),
+            { section: "reading", ...q, active: true, createdAt: serverTimestamp() },
+            { merge: true });
+        }
+        alert(L("seeded"));
+      } finally {
+        seedBtn.disabled = false;
       }
-      alert(L("seeded"));
-      seedBtn.disabled = false;
     };
     wrap.appendChild(seedBtn);
+    const dedupeBtn = el(`<button class="ghost">${L("removeDuplicates")}</button>`);
+    dedupeBtn.onclick = async () => {
+      // Groups by the same content key seedDocId() derives its id from, so
+      // this cleans up duplicates left over from before that fix — keeps
+      // the oldest doc in each group, deletes the rest.
+      const groups = {};
+      state.questions.forEach((q) => {
+        const key = `${q.type}|${q.category}|${q.text?.ar || ""}`;
+        (groups[key] = groups[key] || []).push(q);
+      });
+      const toDelete = [];
+      Object.values(groups).forEach((list) => {
+        if (list.length < 2) return;
+        list.sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
+        toDelete.push(...list.slice(1));
+      });
+      if (!toDelete.length) { alert(L("noDuplicates")); return; }
+      if (!confirm(L("removeDuplicatesConfirm", { n: toDelete.length }))) return;
+      dedupeBtn.disabled = true;
+      try {
+        for (const q of toDelete) await deleteDoc(doc(db, "questions", q.id));
+        alert(L("duplicatesRemoved", { n: toDelete.length }));
+      } finally {
+        dedupeBtn.disabled = false;
+      }
+    };
+    wrap.appendChild(dedupeBtn);
     const addBtn = el(`<button class="primary">${L("addQuestion")}</button>`);
     const formHost = el(`<div id="q-form-host"></div>`);
     addBtn.onclick = () => { formHost.innerHTML = ""; formHost.appendChild(renderQuestionForm()); };
