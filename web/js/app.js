@@ -82,7 +82,9 @@ function fmtFileSize(bytes) {
 // A small "uploaded file" card (icon + name + size/date meta line) —
 // the polished-app style the admin asked for, instead of a bare filename.
 function renderFileInfoCard(m, lang) {
-  const localeMap = { ar: "ar-IQ", ku: "en-GB", en: "en-US" };
+  // -u-nu-latn: keep Arabic date/time formatting but force Western digits
+// (0-9) instead of Eastern Arabic-Indic numerals (٠-٩) everywhere in the app.
+const localeMap = { ar: "ar-IQ-u-nu-latn", ku: "en-GB", en: "en-US" };
   const dateStr = m.updatedAt?.seconds
     ? new Date(m.updatedAt.seconds * 1000).toLocaleString(localeMap[lang])
     : m.updatedAtMs ? new Date(m.updatedAtMs).toLocaleString(localeMap[lang]) : "";
@@ -892,7 +894,9 @@ const DEVICE_TYPE_KEY = { mobile: "deviceTypeMobile", tablet: "deviceTypeTablet"
 
 function renderCandidateDevicesPanel(c) {
   const wrap = el(`<div class="card"><h3>${escapeHtml(c.name)} — ${L("viewDevices")}</h3><div id="devices-body">${L("loading")}</div></div>`);
-  const localeMap = { ar: "ar-IQ", ku: "en-GB", en: "en-US" };
+  // -u-nu-latn: keep Arabic date/time formatting but force Western digits
+// (0-9) instead of Eastern Arabic-Indic numerals (٠-٩) everywhere in the app.
+const localeMap = { ar: "ar-IQ-u-nu-latn", ku: "en-GB", en: "en-US" };
   getDocs(collection(db, "users", c.id, "loginDevices")).then((snap) => {
     const body = wrap.querySelector("#devices-body");
     body.innerHTML = "";
@@ -1351,7 +1355,9 @@ function renderMaterialAdminTab() {
     rows.innerHTML = "";
     const uids = Object.keys(byUid);
     if (!uids.length) { rows.innerHTML = `<tr><td colspan="5">${L("neverRead")}</td></tr>`; return; }
-    const localeMap = { ar: "ar-IQ", ku: "en-GB", en: "en-US" };
+    // -u-nu-latn: keep Arabic date/time formatting but force Western digits
+// (0-9) instead of Eastern Arabic-Indic numerals (٠-٩) everywhere in the app.
+const localeMap = { ar: "ar-IQ-u-nu-latn", ku: "en-GB", en: "en-US" };
     uids.forEach((uid) => {
       const g = byUid[uid];
       const cand = state.candidates.find((c) => c.id === uid);
@@ -2067,7 +2073,9 @@ function renderResult() {
     </div>
   `);
   wrap.querySelector("#material-btn-result").onclick = () => setState({ route: "material" });
-  const localeMap = { ar: "ar-IQ", ku: "en-GB", en: "en-US" };
+  // -u-nu-latn: keep Arabic date/time formatting but force Western digits
+// (0-9) instead of Eastern Arabic-Indic numerals (٠-٩) everywhere in the app.
+const localeMap = { ar: "ar-IQ-u-nu-latn", ku: "en-GB", en: "en-US" };
   wrap.querySelector("#profile-info").innerHTML = `
     <h3>${escapeHtml(p.name || "")}</h3>
     <p class="hint">${escapeHtml(p.phone || "")}</p>
