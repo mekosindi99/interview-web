@@ -1047,6 +1047,29 @@ function renderCandidateResultPanel(c) {
     body.innerHTML = "";
     const answers = a.answers || {};
     const manualAnswers = a.manualAnswers || {};
+    const graded = a.examStatus === "graded";
+
+    // Same 4-section box layout as the candidate's own result screen, so
+    // the admin can see the breakdown at a glance instead of re-tallying
+    // the question list by hand.
+    const sectionScoresNow = a.sectionScores || {};
+    const usedSectionsNow = SECTIONS.filter((s) => (sectionScoresNow[s]?.total || 0) > 0);
+    if (usedSectionsNow.length) {
+      const grid = el(`<div class="section-score-grid"></div>`);
+      usedSectionsNow.forEach((s) => {
+        const ss = sectionScoresNow[s];
+        const isManualSection = (s === "speaking" || s === "writing");
+        const stillPending = isManualSection && !graded;
+        grid.appendChild(el(`
+          <div class="section-score-box">
+            <div class="section-score-lbl">${L(s)}</div>
+            <div class="section-score-val">${stillPending ? "—" : `${ss.score} / ${ss.total}`}</div>
+          </div>
+        `));
+      });
+      body.appendChild(grid);
+    }
+
     state.questions.filter((q) => q.id in answers).forEach((q, i) => {
       const given = answers[q.id];
       const correct = q.type === "truefalse" ? q.correctAnswer : q.correctIndex;
@@ -1119,7 +1142,7 @@ function renderCandidateResultPanel(c) {
     }
 
     const total = (a.autoScore ?? a.score ?? 0) + (a.manualScore ?? 0);
-    const summary = el(`<p><b>${L("score")}:</b> ${total} / ${a.totalPoints}</p>`);
+    const summary = el(`<p class="total-score-line"><span>${L("finalScoreLabel")}</span> <b>${total} / ${a.totalPoints}</b></p>`);
     body.appendChild(summary);
   });
   return wrap;
