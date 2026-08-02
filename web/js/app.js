@@ -2148,10 +2148,17 @@ async function loadMaterialAndRender(body) {
     // bypassing the app entirely) — so the request needs the candidate's
     // own ID token, same as the upload endpoints.
     const token = await state.user.getIdToken();
+    // cMapUrl/standardFontDataUrl: without these, pdf.js can't substitute
+    // glyphs for fonts that aren't fully embedded in the PDF (common with
+    // Kurdish/Arabic-script documents) — text renders as garbled boxes
+    // instead of the real characters, which is exactly what was happening.
     materialPdfDoc = await pdfjsLib.getDocument({
       url: `${ADMIN_SERVER_URL}/material/${state.material.fileId}`,
       httpHeaders: { Authorization: `Bearer ${token}` },
       disableRange: true, disableStream: true,
+      cMapUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.6.82/cmaps/",
+      cMapPacked: true,
+      standardFontDataUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.6.82/standard_fonts/",
     }).promise;
   } catch (err) {
     body.innerHTML = `<p class="err">${err.message}</p>`;
