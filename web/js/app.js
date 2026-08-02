@@ -1295,13 +1295,19 @@ function renderMaterialAdminTab() {
   wrap.appendChild(imagesRow);
 
   // ---- Active mode toggle (which one candidates actually see) ----
-  if (isAdmin && hasPdf && hasImages) {
+  // Always visible once at least one format exists — picking a format with
+  // nothing uploaded yet is how the admin can deliberately show "no
+  // material" for that format (its button is just disabled instead, so
+  // that specific no-op isn't available, but the other format stays a
+  // one-click switch away at any time).
+  if (isAdmin && (hasPdf || hasImages)) {
     const modeCard = el(`
       <div class="card">
         <h3>${L("materialActiveModeLabel")}</h3>
+        <p class="hint">${L("materialActiveModeHint")}</p>
         <div class="row-actions">
-          <button type="button" id="mode-pdf-btn" class="${mode === "pdf" ? "primary" : "ghost"}">${L("materialModePdf")}</button>
-          <button type="button" id="mode-images-btn" class="${mode === "images" ? "primary" : "ghost"}">${L("materialModeImages")}</button>
+          <button type="button" id="mode-pdf-btn" class="${mode === "pdf" ? "primary" : "ghost"}" ${hasPdf ? "" : "disabled"}>${L("materialModePdf")}</button>
+          <button type="button" id="mode-images-btn" class="${mode === "images" ? "primary" : "ghost"}" ${hasImages ? "" : "disabled"}>${L("materialModeImages")}</button>
         </div>
       </div>
     `);
