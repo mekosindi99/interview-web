@@ -42,6 +42,20 @@ setPersistence(auth, browserLocalPersistence).catch(() => {});
 // one of these (old questions default to "reading" — see loadQuestions*).
 const SECTIONS = ["reading", "listening", "speaking", "writing"];
 const DEFAULT_SECTION_MINUTES = { reading: 20, listening: 15, speaking: 10, writing: 20 };
+// 0 = no limit, use every active question in that section.
+const DEFAULT_SECTION_COUNTS = { reading: 0, listening: 0, speaking: 0, writing: 0 };
+
+// Picks n random items from arr without mutating it (Fisher-Yates partial
+// shuffle). n <= 0 or n >= arr.length just returns everything.
+function pickRandom(arr, n) {
+  if (!n || n >= arr.length) return arr.slice();
+  const pool = arr.slice();
+  for (let i = pool.length - 1; i > pool.length - 1 - n; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return pool.slice(pool.length - n);
+}
 
 // Secondary app instance so the admin can create candidate accounts
 // without Firebase Auth switching the admin's own session to the new user.
@@ -60,7 +74,7 @@ let state = {
   questions: [],
   candidates: [],
   attempts: {},
-  examConfig: { sectionMinutes: { ...DEFAULT_SECTION_MINUTES }, sectionOrder: [...SECTIONS] },
+  examConfig: { sectionMinutes: { ...DEFAULT_SECTION_MINUTES }, sectionCounts: { ...DEFAULT_SECTION_COUNTS }, sectionOrder: [...SECTIONS] },
   material: null,
 };
 
@@ -166,6 +180,7 @@ let unsubExamConfig = null;
 function mergeExamConfig(data) {
   return {
     sectionMinutes: { ...DEFAULT_SECTION_MINUTES, ...(data?.sectionMinutes || {}) },
+    sectionCounts: { ...DEFAULT_SECTION_COUNTS, ...(data?.sectionCounts || {}) },
     sectionOrder: (data?.sectionOrder && data.sectionOrder.length === SECTIONS.length) ? data.sectionOrder : [...SECTIONS],
   };
 }
@@ -443,6 +458,11 @@ function renderExamSettingsTab() {
       ${SECTIONS.map((s) => `
         <label>${L(s)}<input type="number" name="min_${s}" min="1" value="${cfg.sectionMinutes[s]}" /></label>
       `).join("")}
+      <h3>${L("sectionCountsLabel")}</h3>
+      <p class="hint">${L("sectionCountsHint")}</p>
+      ${SECTIONS.map((s) => `
+        <label>${L(s)}<input type="number" name="count_${s}" min="0" value="${cfg.sectionCounts[s]}" /></label>
+      `).join("")}
       <div class="err" id="settings-msg"></div>
       <button type="submit" class="primary">${L("saveSettings")}</button>
     </form>
@@ -451,8 +471,12 @@ function renderExamSettingsTab() {
     e.preventDefault();
     const f = new FormData(e.target);
     const sectionMinutes = {};
-    SECTIONS.forEach((s) => { sectionMinutes[s] = Number(f.get(`min_${s}`)) || DEFAULT_SECTION_MINUTES[s]; });
-    await setDoc(doc(db, "settings", "examConfig"), { sectionMinutes, sectionOrder: SECTIONS }, { merge: true });
+    const sectionCounts = {};
+    SECTIONS.forEach((s) => {
+      sectionMinutes[s] = Number(f.get(`min_${s}`)) || DEFAULT_SECTION_MINUTES[s];
+      sectionCounts[s] = Math.max(0, Number(f.get(`count_${s}`)) || 0);
+    });
+    await setDoc(doc(db, "settings", "examConfig"), { sectionMinutes, sectionCounts, sectionOrder: SECTIONS }, { merge: true });
     wrap.querySelector("#settings-msg").textContent = L("settingsSaved");
     wrap.querySelector("#settings-msg").classList.remove("err");
     wrap.querySelector("#settings-msg").classList.add("notice");
@@ -1269,7 +1293,15 @@ function renderExam() {
   }
   if (!activeQs.length) return el(`<div class="card center-card">${L("noQuestions")}</div>`);
 
-  const sections = groupBySections(activeQs);
+  // Full pool grouped by section, used to sample from when the exam starts.
+  const fullSections = groupBySections(activeQs);
+  // Once the candidate has started, examSelectedQuestionIds pins them to the
+  // same randomly-sampled subset every render/reload — recomputing the
+  // sample on every render would change which questions they see mid-exam.
+  const selectedIds = state.profile.examSelectedQuestionIds;
+  const sections = selectedIds
+    ? groupBySections(activeQs.filter((q) => selectedIds.includes(q.id)))
+    : fullSections;
 
   // Restore progress saved on the candidate's own profile so a refresh
   // mid-exam doesn't wipe it.
@@ -1294,13 +1326,22 @@ function renderExam() {
     `);
     wrap.querySelector("#material-btn").onclick = () => setState({ route: "material" });
     wrap.querySelector("#start-btn").onclick = async () => {
-      const deadline = Date.now() + (state.examConfig.sectionMinutes[sections[0].section] || 20) * 60000;
+      // Sample once, here, from the full pool — sectionCounts of 0 means
+      // "use everything" (pickRandom returns the whole array in that case).
+      const examSelectedQuestionIds = [];
+      fullSections.forEach((sec) => {
+        const n = state.examConfig.sectionCounts[sec.section] || 0;
+        pickRandom(sec.qs, n).forEach((q) => examSelectedQuestionIds.push(q.id));
+      });
+      const startSections = groupBySections(activeQs.filter((q) => examSelectedQuestionIds.includes(q.id)));
+      const deadline = Date.now() + (state.examConfig.sectionMinutes[startSections[0].section] || 20) * 60000;
       await updateDoc(doc(db, "users", state.profile.id), {
         examStatus: "in_progress", startedAt: serverTimestamp(),
         examSectionIndex: 0, examQIndex: 0, examSectionDeadline: deadline,
+        examSelectedQuestionIds,
       });
       examSectionIndex = 0; examQIndex = 0; examSectionDeadline = deadline;
-      setState({ profile: { ...state.profile, examStatus: "in_progress" } });
+      setState({ profile: { ...state.profile, examStatus: "in_progress", examSelectedQuestionIds } });
     };
     return wrap;
   }
@@ -1356,7 +1397,7 @@ function renderExam() {
   const nextSectionBtn = wrap.querySelector("#next-section-btn");
   if (nextSectionBtn) nextSectionBtn.onclick = () => advanceSection(sections);
   const submitBtn = wrap.querySelector("#submit-btn");
-  if (submitBtn) submitBtn.onclick = () => { if (confirm(L("submitConfirm"))) submitExam(activeQs); };
+  if (submitBtn) submitBtn.onclick = () => { if (confirm(L("submitConfirm"))) submitExam(sections.flatMap((s) => s.qs)); };
 
   startExamTimer(sections);
   return wrap;
@@ -1476,7 +1517,10 @@ function stopExamTimer() {
 function advanceSection(sections) {
   stopExamTimer();
   if (examSectionIndex >= sections.length - 1) {
-    submitExam(state.questions.filter((q) => q.active !== false));
+    // Score against the same (possibly sampled) question set the candidate
+    // was actually shown — not the full bank, which would count any
+    // never-shown question as "wrong" and skew the total.
+    submitExam(sections.flatMap((s) => s.qs));
     return;
   }
   examSectionIndex += 1;
