@@ -81,6 +81,19 @@ function fmtFileSize(bytes) {
 
 // A small "uploaded file" card (icon + name + size/date meta line) —
 // the polished-app style the admin asked for, instead of a bare filename.
+// Candidate's own login credentials (name/phone/password), laid out as
+// clear label/value rows so it's easy to read at a glance and not lose
+// track of — shown pinned at the top of the pre-exam and result screens.
+function renderCredentialsCard(p) {
+  return el(`
+    <div class="card cred-card">
+      <div class="cred-row"><span class="cred-label">${L("name")}</span><span class="cred-value">${escapeHtml(p.name || "")}</span></div>
+      <div class="cred-row"><span class="cred-label">${L("phone")}</span><span class="cred-value mono">${escapeHtml(p.phone || "")}</span></div>
+      ${p.code ? `<div class="cred-row"><span class="cred-label">${L("password")}</span><span class="cred-value mono">${escapeHtml(p.code)}</span></div>` : ""}
+    </div>
+  `);
+}
+
 function renderFileInfoCard(m, lang) {
   // -u-nu-latn: keep Arabic date/time formatting but force Western digits
 // (0-9) instead of Eastern Arabic-Indic numerals (٠-٩) everywhere in the app.
@@ -1878,14 +1891,16 @@ function renderExam() {
   }
 
   if (state.profile.examStatus === "not_started") {
-    const wrap = el(`
+    const wrap = el(`<div></div>`);
+    wrap.appendChild(renderCredentialsCard(state.profile));
+    const actionsCard = el(`
       <div class="card center-card">
         <h2>${L("appName")}</h2>
-        <p>${escapeHtml(state.profile.name || "")}</p>
         <button id="material-btn" class="ghost">${L("readMaterial")}</button>
         <button id="start-btn" class="primary">${L("startExam")}</button>
       </div>
     `);
+    wrap.appendChild(actionsCard);
     wrap.querySelector("#material-btn").onclick = () => setState({ route: "material" });
     wrap.querySelector("#start-btn").onclick = async () => {
       // Manual mode: every candidate gets the exact same admin-picked set.
@@ -2161,7 +2176,8 @@ function renderResult() {
       <div class="row-actions" style="justify-content:center;margin-bottom:4px">
         <button id="material-btn-result" class="ghost">${L("readMaterial")}</button>
       </div>
-      <div class="card center-card" id="profile-info"></div>
+      <div id="cred-card-host"></div>
+      <div class="card center-card" id="exam-meta"></div>
       <div class="card center-card" id="result-summary">
         <h2>${L("yourResult")}</h2>
         <p>${L("loading")}</p>
@@ -2171,12 +2187,9 @@ function renderResult() {
   `);
   wrap.querySelector("#material-btn-result").onclick = () => setState({ route: "material" });
   // -u-nu-latn: keep Arabic date/time formatting but force Western digits
-// (0-9) instead of Eastern Arabic-Indic numerals (٠-٩) everywhere in the app.
-const localeMap = { ar: "ar-IQ-u-nu-latn", ku: "en-GB", en: "en-US" };
-  wrap.querySelector("#profile-info").innerHTML = `
-    <h3>${escapeHtml(p.name || "")}</h3>
-    <p class="hint">${escapeHtml(p.phone || "")}</p>
-  `;
+  // (0-9) instead of Eastern Arabic-Indic numerals (٠-٩) everywhere in the app.
+  const localeMap = { ar: "ar-IQ-u-nu-latn", ku: "en-GB", en: "en-US" };
+  wrap.querySelector("#cred-card-host").appendChild(renderCredentialsCard(p));
   getDoc(doc(db, "attempts", p.id)).then((snap) => {
     if (!snap.exists()) return;
     const a = snap.data();
@@ -2280,6 +2293,12 @@ async function loadMaterialAndRender(body) {
     state.material = snap.exists() ? snap.data() : false;
   }
   if (!state.material) { body.innerHTML = `<p>${L("noMaterial")}</p>`; return; }
+
+  // Bug fix: materialZoom is a module-level var that used to carry over
+  // from a previous viewing session (e.g. someone zoomed out once, and
+  // every later open started back at that same reduced zoom instead of a
+  // fresh 100%) — reset it every time the viewer opens.
+  materialZoom = 1.3;
 
   const hasImages = Array.isArray(state.material.images) && state.material.images.length > 0;
   const hasPdf = !!state.material.fileId;
@@ -2446,6 +2465,8 @@ async function loadMaterialAndRender(body) {
       const scale = materialZoom / 1.3;
       canvas.width = img.naturalWidth * scale;
       canvas.height = img.naturalHeight * scale;
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
     }
     drawWatermark(ctx, canvas.width, canvas.height);

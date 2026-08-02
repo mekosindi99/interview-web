@@ -67,6 +67,12 @@ button.link.warn { color: #a06600; }
 button.ghost.danger { color: var(--bad); border-color: var(--bad); }
 button:disabled { opacity: .5; cursor: not-allowed; }
 
+.cred-card { max-width: 420px; margin: 0 auto 16px; }
+.cred-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; border-bottom: 1px dashed var(--border); }
+.cred-row:last-child { border-bottom: none; }
+.cred-label { color: var(--muted); font-size: 13px; }
+.cred-value { font-weight: 700; font-size: 15px; }
+
 .history-card { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; margin-bottom: 8px; }
 .history-card-score { font-weight: 700; font-size: 16px; }
 
