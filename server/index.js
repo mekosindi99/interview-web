@@ -273,6 +273,20 @@ app.get("/material/:fileId", requireSignedIn, async (req, res) => {
   }
 });
 
+// Deletes the training-material PDF from Google Drive itself — admin only.
+// The client is responsible for also clearing settings/material in
+// Firestore right after this succeeds, which is what actually makes it
+// disappear for every candidate (they all read that one shared doc).
+app.delete("/material/:fileId", requireAdmin, async (req, res) => {
+  try {
+    await drive.files.delete({ fileId: req.params.fileId });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("material delete failed", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Permanently deletes a candidate/co-admin: their Auth login (freeing the
 // phone number/email for reuse) plus their Firestore profile and any exam
 // attempt record. Never lets an admin delete themselves or another admin.

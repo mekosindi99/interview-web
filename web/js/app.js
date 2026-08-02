@@ -45,8 +45,59 @@ const DEFAULT_SECTION_MINUTES = { reading: 20, listening: 15, speaking: 10, writ
 // 0 = no limit, use every active question in that section.
 const DEFAULT_SECTION_COUNTS = { reading: 0, listening: 0, speaking: 0, writing: 0 };
 
+// Site-wide font, admin-configurable (Exam Settings). Only fonts actually
+// available for free via Google Fonts are listed here — "Sarchia"/"IrSharp"
+// (Farsi fonts) aren't on Google Fonts and would need the admin to supply
+// the actual font files to add them.
+const FONT_OPTIONS = {
+  cairo: { label: "Cairo", family: `"Cairo", "Segoe UI", Tahoma, "Noto Sans Arabic", sans-serif`, googleFamily: "Cairo:wght@400;600;700;800" },
+  vazirmatn: { label: "Vazirmatn", family: `"Vazirmatn", "Segoe UI", Tahoma, "Noto Sans Arabic", sans-serif`, googleFamily: "Vazirmatn:wght@400;600;700;800" },
+  notosans: { label: "Noto Sans Arabic", family: `"Noto Sans Arabic", "Segoe UI", Tahoma, sans-serif`, googleFamily: "Noto+Sans+Arabic:wght@400;600;700;800" },
+};
+let _appliedFontKey = null;
+function applyFont(key) {
+  const font = FONT_OPTIONS[key] || FONT_OPTIONS.cairo;
+  if (_appliedFontKey === key) return;
+  _appliedFontKey = key;
+  let link = document.getElementById("dynamic-font-link");
+  if (!link) {
+    link = document.createElement("link");
+    link.id = "dynamic-font-link";
+    link.rel = "stylesheet";
+    document.head.appendChild(link);
+  }
+  link.href = `https://fonts.googleapis.com/css2?family=${font.googleFamily}&display=swap`;
+  document.documentElement.style.fontFamily = font.family;
+}
+
 // Picks n random items from arr without mutating it (Fisher-Yates partial
 // shuffle). n <= 0 or n >= arr.length just returns everything.
+function fmtFileSize(bytes) {
+  if (!bytes) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+// A small "uploaded file" card (icon + name + size/date meta line) —
+// the polished-app style the admin asked for, instead of a bare filename.
+function renderFileInfoCard(m, lang) {
+  const localeMap = { ar: "ar-IQ", ku: "en-GB", en: "en-US" };
+  const dateStr = m.updatedAt?.seconds
+    ? new Date(m.updatedAt.seconds * 1000).toLocaleString(localeMap[lang])
+    : m.updatedAtMs ? new Date(m.updatedAtMs).toLocaleString(localeMap[lang]) : "";
+  const meta = [fmtFileSize(m.fileSize), dateStr].filter(Boolean).join(" · ");
+  return el(`
+    <div class="file-info-card">
+      <div class="file-info-icon">📄</div>
+      <div>
+        <div class="file-info-name">${escapeHtml(m.fileName || "")}</div>
+        ${meta ? `<div class="file-info-meta">${escapeHtml(meta)}</div>` : ""}
+      </div>
+    </div>
+  `);
+}
+
 function pickRandom(arr, n) {
   if (!n || n >= arr.length) return arr.slice();
   const pool = arr.slice();
@@ -74,7 +125,7 @@ let state = {
   questions: [],
   candidates: [],
   attempts: {},
-  examConfig: { sectionMinutes: { ...DEFAULT_SECTION_MINUTES }, sectionCounts: { ...DEFAULT_SECTION_COUNTS }, sectionOrder: [...SECTIONS], selectionMode: "random", manualQuestionIds: [] },
+  examConfig: { sectionMinutes: { ...DEFAULT_SECTION_MINUTES }, sectionCounts: { ...DEFAULT_SECTION_COUNTS }, sectionOrder: [...SECTIONS], selectionMode: "random", manualQuestionIds: [], fontFamily: "cairo" },
   material: null,
 };
 
@@ -187,18 +238,22 @@ function mergeExamConfig(data) {
     // "manual": every candidate gets the exact same admin-picked question set.
     selectionMode: data?.selectionMode === "manual" ? "manual" : "random",
     manualQuestionIds: Array.isArray(data?.manualQuestionIds) ? data.manualQuestionIds : [],
+    fontFamily: FONT_OPTIONS[data?.fontFamily] ? data.fontFamily : "cairo",
   };
 }
 function watchExamConfig() {
   if (unsubExamConfig) return;
   unsubExamConfig = onSnapshot(doc(db, "settings", "examConfig"), (snap) => {
-    setState({ examConfig: mergeExamConfig(snap.exists() ? snap.data() : null) });
+    const cfg = mergeExamConfig(snap.exists() ? snap.data() : null);
+    applyFont(cfg.fontFamily);
+    setState({ examConfig: cfg });
   });
 }
 async function loadExamConfig() {
   try {
     const snap = await getDoc(doc(db, "settings", "examConfig"));
     state.examConfig = mergeExamConfig(snap.exists() ? snap.data() : null);
+    applyFont(state.examConfig.fontFamily);
   } catch (err) {
     console.warn("examConfig load failed, using defaults", err);
   }
@@ -476,6 +531,32 @@ function renderAdminShell() {
 function renderExamSettingsTab() {
   const cfg = state.examConfig;
   const wrap = el(`<div></div>`);
+
+  // ---- Site-wide font ----
+  const fontForm = el(`
+    <form id="font-form" class="card">
+      <h3>${L("fontsLabel")}</h3>
+      <p class="hint">${L("fontsHint")}</p>
+      <label>${L("fontType")}
+        <select name="fontFamily">
+          ${Object.entries(FONT_OPTIONS).map(([key, f]) => `<option value="${key}">${f.label}</option>`).join("")}
+        </select>
+      </label>
+      <div class="err" id="font-msg"></div>
+      <button type="submit" class="primary">${L("saveSettings")}</button>
+    </form>
+  `);
+  fontForm.querySelector("[name=fontFamily]").value = cfg.fontFamily;
+  fontForm.onsubmit = async (e) => {
+    e.preventDefault();
+    const fontFamily = new FormData(e.target).get("fontFamily");
+    await setDoc(doc(db, "settings", "examConfig"), { fontFamily }, { merge: true });
+    applyFont(fontFamily);
+    state.examConfig = { ...state.examConfig, fontFamily };
+    const msg = fontForm.querySelector("#font-msg");
+    msg.textContent = L("settingsSaved"); msg.classList.remove("err"); msg.classList.add("notice");
+  };
+  wrap.appendChild(fontForm);
 
   // ---- Per-section time limits (independent of selection mode) ----
   const minutesForm = el(`
@@ -1091,20 +1172,43 @@ function renderMaterialAdminTab() {
       errBox.textContent = L("uploadingFile");
       errBox.classList.remove("notice");
       try {
+        const fileSize = file.size;
         const { fileId, fileName } = await uploadViaServer("/uploads/material", file);
-        await setDoc(doc(db, "settings", "material"), { fileId, fileName, updatedAt: serverTimestamp() });
-        state.material = { fileId, fileName };
-        statusP.textContent = `${L("materialUploaded")}: ${fileName}`;
-        errBox.textContent = L("materialUploaded");
-        errBox.classList.add("notice");
+        await setDoc(doc(db, "settings", "material"), { fileId, fileName, fileSize, updatedAt: serverTimestamp() });
+        state.material = { fileId, fileName, fileSize, updatedAtMs: Date.now() };
+        setState({});
       } catch (err) {
         errBox.textContent = err.message;
       }
     };
     wrap.appendChild(form);
   }
-  const statusP = el(`<p>${state.material?.fileName ? `${L("materialUploaded")}: ${escapeHtml(state.material.fileName)}` : L("noMaterial")}</p>`);
-  wrap.appendChild(statusP);
+  const statusRow = el(`<div class="row-actions" style="align-items:center"></div>`);
+  statusRow.appendChild(state.material?.fileName ? renderFileInfoCard(state.material, state.lang) : el(`<p>${L("noMaterial")}</p>`));
+  if (isAdmin && state.material?.fileId) {
+    const delBtn = el(`<button class="link danger">${L("deleteMaterial")}</button>`);
+    delBtn.onclick = async () => {
+      if (!confirm(L("deleteMaterialConfirm"))) return;
+      delBtn.disabled = true;
+      try {
+        const token = await state.user.getIdToken();
+        const res = await fetch(`${ADMIN_SERVER_URL}/material/${state.material.fileId}`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+        // Clears it for EVERY candidate — they all read this one shared doc.
+        await deleteDoc(doc(db, "settings", "material"));
+        state.material = false;
+        setState({});
+      } catch (err) {
+        alert(`${L("error")}: ${err.message}`);
+        delBtn.disabled = false;
+      }
+    };
+    statusRow.appendChild(delBtn);
+  }
+  wrap.appendChild(statusRow);
 
   const statsHost = el(`
     <div>
@@ -1123,7 +1227,9 @@ function renderMaterialAdminTab() {
     if (state.material == null) {
       const snap = await getDoc(doc(db, "settings", "material"));
       state.material = snap.exists() ? snap.data() : false;
-      if (state.material) statusP.textContent = `${L("materialUploaded")}: ${escapeHtml(state.material.fileName || "")}`;
+      // Re-render so the synchronous code above rebuilds the file-info card
+      // (and delete button, now that state.material.fileId exists) fresh.
+      if (state.material) setState({});
     }
     const snap = await getDocs(collection(db, "materialSessions"));
     const byUid = {};
@@ -2001,8 +2107,26 @@ async function loadMaterialAndRender(body) {
   // This just makes casual copying/printing harder and traceable.
   canvasWrap.oncontextmenu = (e) => e.preventDefault();
   canvasWrap.style.userSelect = "none";
-  const blurOnHide = () => { canvasWrap.style.filter = document.hidden ? "blur(20px)" : ""; };
-  document.addEventListener("visibilitychange", blurOnHide);
+  // Bug fix: reading time used to keep counting even while the tab/app was
+  // backgrounded or the screen locked — durationSec is (now - openedAt), a
+  // plain wall-clock diff with nothing pausing it while hidden, so idle
+  // time silently inflated the "total reading time" stat. Shifting both
+  // reference timestamps forward by exactly how long it was hidden makes
+  // the diff skip that gap entirely once it becomes visible again.
+  let materialHiddenAt = 0;
+  const onVisibilityChange = () => {
+    const now = Date.now();
+    if (document.hidden) {
+      materialHiddenAt = now;
+    } else if (materialHiddenAt) {
+      const hiddenMs = now - materialHiddenAt;
+      materialOpenedAt += hiddenMs;
+      materialPageStartTs += hiddenMs;
+      materialHiddenAt = 0;
+    }
+    canvasWrap.style.filter = document.hidden ? "blur(20px)" : "";
+  };
+  document.addEventListener("visibilitychange", onVisibilityChange);
   const beforePrint = () => { canvasWrap.style.visibility = "hidden"; };
   const afterPrint = () => { canvasWrap.style.visibility = "visible"; };
   window.addEventListener("beforeprint", beforePrint);
