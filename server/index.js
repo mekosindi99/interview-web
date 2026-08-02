@@ -22,38 +22,42 @@ admin.initializeApp({
 const db = admin.firestore();
 const auth = admin.auth();
 
-// ── Google Drive (reuses the same Firebase service account — no second
-//    credential to manage). The service account's client_email must be
-//    shared as Editor on DRIVE_FOLDER_ID (see server/README.md), and the
-//    Google Drive API must be enabled on the backing GCP project. ──
+// ── Google Drive, via OAuth (NOT the Firebase service account) ──
+// Service accounts have no storage quota of their own on a personal Gmail
+// account (no Google Workspace shared drives available), so uploads must
+// happen as an actual human user instead. One-time setup: the admin visits
+// /oauth/start once, authorizes, and the resulting refresh token is saved
+// as GOOGLE_OAUTH_REFRESH_TOKEN — after that, all uploads count against the
+// admin's own 15GB Drive quota and need no further interaction.
+// Scope is deliberately drive.file (not the full drive scope): it only
+// grants access to files this app itself creates, which is all we need and
+// — unlike full drive access — doesn't require Google's app-verification
+// review to use outside "Testing" mode.
 const DRIVE_FOLDER_ID = process.env.DRIVE_FOLDER_ID;
+const OAUTH_CLIENT_ID = process.env.GOOGLE_OAUTH_CLIENT_ID;
+const OAUTH_CLIENT_SECRET = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+const OAUTH_REDIRECT_URI = process.env.GOOGLE_OAUTH_REDIRECT_URI;
+const OAUTH_REFRESH_TOKEN = process.env.GOOGLE_OAUTH_REFRESH_TOKEN;
+const OAUTH_SETUP_SECRET = process.env.OAUTH_SETUP_SECRET;
 if (!DRIVE_FOLDER_ID) console.warn("Missing DRIVE_FOLDER_ID env var — Drive uploads will fail");
-const driveAuth = new google.auth.GoogleAuth({
-  credentials: serviceAccount,
-  scopes: ["https://www.googleapis.com/auth/drive"],
-});
-const drive = google.drive({ version: "v3", auth: driveAuth });
+if (!OAUTH_CLIENT_ID || !OAUTH_CLIENT_SECRET || !OAUTH_REDIRECT_URI) {
+  console.warn("Missing GOOGLE_OAUTH_CLIENT_ID/SECRET/REDIRECT_URI — Drive OAuth setup unavailable");
+}
+if (!OAUTH_REFRESH_TOKEN) console.warn("Missing GOOGLE_OAUTH_REFRESH_TOKEN — Drive uploads will fail until /oauth/start is completed");
+
+const oauth2Client = new google.auth.OAuth2(OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET, OAUTH_REDIRECT_URI);
+if (OAUTH_REFRESH_TOKEN) oauth2Client.setCredentials({ refresh_token: OAUTH_REFRESH_TOKEN });
+const drive = google.drive({ version: "v3", auth: oauth2Client });
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
-// Finds (or creates) a subfolder by name under parentId — used to namespace
-// uploads (speaking/{uid}/, listening/, material/) inside DRIVE_FOLDER_ID.
-async function getOrCreateSubfolder(name, parentId) {
-  const q = `'${parentId}' in parents and name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
-  const list = await drive.files.list({ q, fields: "files(id)" });
-  if (list.data.files.length) return list.data.files[0].id;
-  const created = await drive.files.create({
-    requestBody: { name, mimeType: "application/vnd.google-apps.folder", parents: [parentId] },
-    fields: "id",
-  });
-  return created.data.id;
-}
-
-// Uploads a buffer to Drive and makes it link-readable (Drive has no
-// per-user ACL for files uploaded by a service account without per-candidate
-// OAuth — this is a known, accepted trade-off vs. Firebase Storage rules).
-async function uploadToDrive({ name, mimeType, buffer, parentId }) {
+// Uploads a buffer to Drive (flat inside DRIVE_FOLDER_ID — no subfolders,
+// since drive.file scope can't reliably list/find existing folders it
+// didn't create itself) and makes it link-readable. Drive has no per-user
+// ACL for files uploaded this way without per-candidate OAuth — an
+// accepted trade-off vs. Firebase Storage rules.
+async function uploadToDrive({ name, mimeType, buffer }) {
   const res = await drive.files.create({
-    requestBody: { name, parents: [parentId] },
+    requestBody: { name, parents: [DRIVE_FOLDER_ID] },
     media: { mimeType, body: Readable.from(buffer) },
     fields: "id",
   });
@@ -107,17 +111,15 @@ async function requireSignedIn(req, res, next) {
   }
 }
 
-// Candidate's own speaking-answer recording — uploaded to
-// speaking/{verifiedUid}/{qid}.webm, made link-readable, URL returned for
+// Candidate's own speaking-answer recording — flat filename
+// speaking__{verifiedUid}__{qid}.webm, made link-readable, URL returned for
 // the client to store on the attempt doc.
 app.post("/uploads/speaking/:qid", requireSignedIn, upload.single("file"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "no file" });
-    const speakingRoot = await getOrCreateSubfolder("speaking", DRIVE_FOLDER_ID);
-    const uidFolder = await getOrCreateSubfolder(req.uid, speakingRoot);
     const fileId = await uploadToDrive({
-      name: `${req.params.qid}.webm`, mimeType: req.file.mimetype || "audio/webm",
-      buffer: req.file.buffer, parentId: uidFolder,
+      name: `speaking__${req.uid}__${req.params.qid}.webm`,
+      mimeType: req.file.mimetype || "audio/webm", buffer: req.file.buffer,
     });
     res.json({ url: driveDirectUrl(fileId), fileId });
   } catch (err) {
@@ -130,10 +132,9 @@ app.post("/uploads/speaking/:qid", requireSignedIn, upload.single("file"), async
 app.post("/uploads/listening", requireAdmin, upload.single("file"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "no file" });
-    const folderId = await getOrCreateSubfolder("listening", DRIVE_FOLDER_ID);
     const fileId = await uploadToDrive({
-      name: `${Date.now()}-${req.file.originalname}`, mimeType: req.file.mimetype || "audio/mpeg",
-      buffer: req.file.buffer, parentId: folderId,
+      name: `listening__${Date.now()}__${req.file.originalname}`,
+      mimeType: req.file.mimetype || "audio/mpeg", buffer: req.file.buffer,
     });
     res.json({ url: driveDirectUrl(fileId), fileId });
   } catch (err) {
@@ -149,15 +150,48 @@ app.post("/uploads/listening", requireAdmin, upload.single("file"), async (req, 
 app.post("/uploads/material", requireAdmin, upload.single("file"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "no file" });
-    const folderId = await getOrCreateSubfolder("material", DRIVE_FOLDER_ID);
     const fileId = await uploadToDrive({
-      name: req.file.originalname, mimeType: "application/pdf",
-      buffer: req.file.buffer, parentId: folderId,
+      name: `material__${req.file.originalname}`,
+      mimeType: "application/pdf", buffer: req.file.buffer,
     });
     res.json({ fileId, fileName: req.file.originalname });
   } catch (err) {
     console.error("material upload failed", err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ── One-time OAuth bootstrap (see server/README.md) ──
+// Gated by a shared secret query param instead of a Firebase admin token
+// because this is a full-page browser redirect flow (Google's consent
+// screen), not a fetch() call that can carry an Authorization header.
+app.get("/oauth/start", (req, res) => {
+  if (!OAUTH_SETUP_SECRET || req.query.key !== OAUTH_SETUP_SECRET) {
+    return res.status(403).send("Forbidden — missing/wrong ?key=");
+  }
+  const url = oauth2Client.generateAuthUrl({
+    access_type: "offline",
+    prompt: "consent", // forces a refresh_token even on repeat authorizations
+    scope: ["https://www.googleapis.com/auth/drive.file"],
+  });
+  res.redirect(url);
+});
+
+app.get("/oauth/callback", async (req, res) => {
+  try {
+    const { tokens } = await oauth2Client.getToken(req.query.code);
+    if (!tokens.refresh_token) {
+      return res.status(200).send(
+        "No refresh_token returned (already authorized before?). Revoke access at " +
+        "https://myaccount.google.com/permissions and try /oauth/start again."
+      );
+    }
+    res.status(200).send(
+      "<pre>Copy this into the GOOGLE_OAUTH_REFRESH_TOKEN Render env var, then redeploy:\n\n" +
+      tokens.refresh_token + "</pre>"
+    );
+  } catch (err) {
+    res.status(500).send("OAuth callback failed: " + err.message);
   }
 });
 

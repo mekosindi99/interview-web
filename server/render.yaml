@@ -13,3 +13,13 @@ services:
         value: https://interview.sonbola.shop,http://localhost:5173
       - key: DRIVE_FOLDER_ID
         sync: false
+      - key: GOOGLE_OAUTH_CLIENT_ID
+        sync: false
+      - key: GOOGLE_OAUTH_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_OAUTH_REDIRECT_URI
+        value: https://interview-admin-server.onrender.com/oauth/callback
+      - key: GOOGLE_OAUTH_REFRESH_TOKEN
+        sync: false
+      - key: OAUTH_SETUP_SECRET
+        sync: false

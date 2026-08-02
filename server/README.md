@@ -40,22 +40,56 @@
 ## 5) رفع الملفات عبر Google Drive (تسجيلات المحادثة، صوت الاستماع، ملف التدريب)
 
 المشروع على خطة Firebase المجانية (Spark) اللي ما تدعم Storage، فرفع الملفات
-يمر عبر هذا السيرفر إلى Google Drive بدل Firebase Storage. يحتاج إعداد
-لمرة وحدة:
+يمر عبر هذا السيرفر إلى Google Drive بدل Firebase Storage.
 
-1. **فعّل Google Drive API**: [Google Cloud Console](https://console.cloud.google.com/apis/library/drive.googleapis.com)
-   → اختر نفس مشروع Firebase تبعك (`interview-3f9f3`) → **Enable**.
-2. **أنشئ مجلد بـ Google Drive تبعك** (مثلاً "Interview Uploads")، وشاركه
-   (Share) مع بريد حساب الخدمة — تلقاه بملف `FIREBASE_SERVICE_ACCOUNT_JSON`
-   نفسه، الحقل `"client_email"` (شكله تقريباً
-   `firebase-adminsdk-xxxxx@interview-3f9f3.iam.gserviceaccount.com`) —
-   وأعطه صلاحية **Editor** (محرر).
-3. **انسخ معرّف المجلد (Folder ID)** من رابط المجلد بالمتصفح (الجزء الأخير
-   من الرابط بعد `folders/`).
-4. أضفه بـ Render كمتغيّر بيئة: **Environment** → **Add Environment Variable**
-   → الاسم `DRIVE_FOLDER_ID`، القيمة معرّف المجلد.
-5. **Manual Deploy** حتى ينزّل السيرفر الاعتماديات الجديدة (`googleapis`,
-   `multer`) ويشتغل.
+⚠️ **حساب الخدمة (Service Account) لا يصلح لهذا** — جوجل ما يعطيه أي مساحة
+تخزين خاصة به على حساب Gmail شخصي (Shared Drives تحتاج Google Workspace
+مدفوع). الحل: رفع الملفات "باسم" حساب Google الشخصي تبعك عبر OAuth، مرة
+وحدة تفوّض فيها السيرفر، وبعدها يشتغل تلقائياً بدون تدخل.
+
+### أ) أنشئ OAuth Client ID
+
+1. [Google Cloud Console → Credentials](https://console.cloud.google.com/apis/credentials)
+   → تأكد نفس مشروع Firebase (`interview-3f9f3`) مختار بالأعلى.
+2. **Create Credentials** → **OAuth client ID**.
+3. لو أول مرة، راح يطلب تعبّي **OAuth consent screen** أول: User Type
+   **External**، عبّي اسم التطبيق وإيميلك، وبخطوة الـ Scopes ما تحتاج تضيف
+   شي يدوياً (السيرفر يطلب `drive.file` مباشرة). احفظ واستمر لين ينخلص،
+   وبالنهاية اضغط **Publish App** (نشر) حتى ما يصير التفويض مؤقت (7 أيام).
+4. رجّع لصفحة Create Credentials: **Application type** = **Web application**،
+   اسمه أي شي.
+5. تحت **Authorized redirect URIs** أضف بالضبط:
+   `https://interview-admin-server.onrender.com/oauth/callback`
+6. **Create** — راح يطلعلك **Client ID** و **Client secret**، خلّيهم قريبين
+   للخطوة الجاية.
+
+### ب) أضف المتغيّرات بـ Render وانشر
+
+بـ Render Dashboard → خدمة `interview-admin-server` → **Environment**، أضف:
+
+| الاسم | القيمة |
+|---|---|
+| `DRIVE_FOLDER_ID` | معرّف مجلد Drive (من رابط المجلد بعد `folders/`) |
+| `GOOGLE_OAUTH_CLIENT_ID` | من الخطوة أ.6 |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | من الخطوة أ.6 |
+| `OAUTH_SETUP_SECRET` | أي كلمة سر تختارها انت (تستخدم مرة وحدة بالخطوة الجاية) |
+
+(`GOOGLE_OAUTH_REDIRECT_URI` موجود جاهز بـ `render.yaml`.)
+
+اضغط **Save, rebuild, and deploy** وانتظر يصير **Live**.
+
+### ج) فوّض السيرفر (مرة وحدة)
+
+1. افتح بالمتصفح (وانت داخل بحساب Google تبعك):
+   `https://interview-admin-server.onrender.com/oauth/start?key=<OAUTH_SETUP_SECRET>`
+   (بدّل `<OAUTH_SETUP_SECRET>` بنفس القيمة اللي حطيتها فوق)
+2. وافق على الصلاحية المطلوبة (ممكن يطلع تحذير "تطبيق غير موثّق" — هذا طبيعي
+   لتطبيق شخصي، اضغط **Advanced** → **Go to (app name)**).
+3. راح ينرجّعك لصفحة فيها **refresh token** طويل — انسخه كامل.
+4. رجّع لـ Render → Environment → أضف `GOOGLE_OAUTH_REFRESH_TOKEN` بهذي
+   القيمة → **Save, rebuild, and deploy**.
+
+خلص — الرفع يشتغل تلقائياً بعد هذا بدون أي تدخل إضافي.
 
 ⚠️ ملاحظة أمان: الملفات المرفوعة (تسجيلات صوت المرشحين، صوت الاستماع، ملف
 PDF) تصير "أي شخص عنده الرابط يقدر يوصلها" — Google Drive ما يدعم تقييد
