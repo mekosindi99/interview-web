@@ -1,0 +1,37 @@
+rules_version = '2';
+
+// Storage rules for: speaking-section audio recordings, listening-section
+// audio prompts, and the training-material PDF. Role lookups mirror
+// firestore.rules (role() / isAdmin() / isStaff() there) since Storage
+// rules can't import Firestore helper functions directly.
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isSignedIn() { return request.auth != null; }
+    function role() {
+      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role;
+    }
+    function isAdmin() { return isSignedIn() && role() == 'admin'; }
+    function isStaff() { return isSignedIn() && (role() == 'admin' || role() == 'coadmin'); }
+
+    // Candidate's own speaking-answer recordings: only they and staff may
+    // read (contains their voice), only they may upload (own uid path).
+    match /speaking/{uid}/{file} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || isStaff());
+      allow write: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Listening-section audio prompts: any signed-in user can listen,
+    // only admin uploads them (from the question form).
+    match /listening/{file} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Training material PDF: any signed-in user can read it, only admin
+    // uploads/replaces it.
+    match /material/{file} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+  }
+}

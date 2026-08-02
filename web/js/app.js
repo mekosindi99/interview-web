@@ -11,14 +11,23 @@ import {
   getFirestore, doc, getDoc, setDoc, updateDoc, addDoc, deleteDoc,
   collection, getDocs, query, where, orderBy, serverTimestamp, onSnapshot,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import {
+  getStorage, ref as storageRef, uploadBytes, getDownloadURL,
+} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
+const storage = getStorage(app);
 // Explicit local persistence: keep the session in this browser across tab
 // closes / restarts, so the login screen isn't shown again on the same
 // device until the user explicitly signs out.
 setPersistence(auth, browserLocalPersistence).catch(() => {});
+
+// TOEFL-style exam sections, fixed order. Every question belongs to exactly
+// one of these (old questions default to "reading" — see loadQuestions*).
+const SECTIONS = ["reading", "listening", "speaking", "writing"];
+const DEFAULT_SECTION_MINUTES = { reading: 20, listening: 15, speaking: 10, writing: 20 };
 
 // Secondary app instance so the admin can create candidate accounts
 // without Firebase Auth switching the admin's own session to the new user.
@@ -37,6 +46,8 @@ let state = {
   questions: [],
   candidates: [],
   attempts: {},
+  examConfig: { sectionMinutes: { ...DEFAULT_SECTION_MINUTES }, sectionOrder: [...SECTIONS] },
+  material: null,
 };
 
 function L(key, vars) { return tr(state.lang, key, vars); }
@@ -87,6 +98,9 @@ onAuthStateChanged(auth, async (user) => {
     watchCandidates();
     watchQuestions();
     watchAttempts();
+    watchExamConfig();
+  } else {
+    loadExamConfig();
   }
 });
 
@@ -131,6 +145,29 @@ function stopStaffWatchers() {
   if (unsubCandidates) { unsubCandidates(); unsubCandidates = null; }
   if (unsubQuestions) { unsubQuestions(); unsubQuestions = null; }
   if (unsubAttempts) { unsubAttempts(); unsubAttempts = null; }
+  if (unsubExamConfig) { unsubExamConfig(); unsubExamConfig = null; }
+}
+
+let unsubExamConfig = null;
+function mergeExamConfig(data) {
+  return {
+    sectionMinutes: { ...DEFAULT_SECTION_MINUTES, ...(data?.sectionMinutes || {}) },
+    sectionOrder: (data?.sectionOrder && data.sectionOrder.length === SECTIONS.length) ? data.sectionOrder : [...SECTIONS],
+  };
+}
+function watchExamConfig() {
+  if (unsubExamConfig) return;
+  unsubExamConfig = onSnapshot(doc(db, "settings", "examConfig"), (snap) => {
+    setState({ examConfig: mergeExamConfig(snap.exists() ? snap.data() : null) });
+  });
+}
+async function loadExamConfig() {
+  try {
+    const snap = await getDoc(doc(db, "settings", "examConfig"));
+    state.examConfig = mergeExamConfig(snap.exists() ? snap.data() : null);
+  } catch (err) {
+    console.warn("examConfig load failed, using defaults", err);
+  }
 }
 
 // ---------- Helpers ----------
@@ -231,7 +268,9 @@ function render() {
   if (!state.user) return root.appendChild(renderLogin());
 
   if (state.profile?.role === "candidate") {
-    if (state.route === "result" || ["submitted", "graded"].includes(state.profile.examStatus)) {
+    if (state.route === "material") {
+      root.appendChild(renderMaterialViewer());
+    } else if (state.route === "result" || ["submitted", "graded"].includes(state.profile.examStatus)) {
       root.appendChild(renderResult());
     } else {
       root.appendChild(renderExam());
@@ -253,6 +292,11 @@ function flagHtml(l) { return l === "ku" ? KURD_FLAG_SVG : `<span class="flag-em
 // choices stay on screen at all times (per explicit request).
 function langSwitcher() {
   const wrap = el(`<div class="lang-row"></div>`);
+  if (state.user) {
+    const logoutBtn = el(`<button type="button" class="ghost logout-flag-btn">${L("logout")}</button>`);
+    logoutBtn.onclick = () => signOut(auth);
+    wrap.appendChild(logoutBtn);
+  }
   LANGS.forEach((l) => {
     const b = el(`
       <button type="button" class="lang-flag-btn ${l === state.lang ? "active" : ""}" aria-label="${LANG_NAME[l]}" title="${LANG_NAME[l]}">
@@ -355,27 +399,50 @@ function renderAdminShell() {
   const tab = state.adminTab || "candidates";
   const wrap = el(`
     <div class="shell">
-      <header class="topbar">
-        <div class="brand">${L("appName")}</div>
-        <div class="who">${L("welcome")}, ${escapeHtml(state.profile.name || "")} · ${L(state.profile.role === "admin" ? "roleAdmin" : "roleCoadmin")}</div>
-        <button id="logout-btn" class="ghost">${L("logout")}</button>
-      </header>
       <nav class="tabs">
         <button data-tab="candidates" class="${tab === "candidates" ? "active" : ""}">${L("candidates")}</button>
         <button data-tab="questions" class="${tab === "questions" ? "active" : ""}">${L("questionsBank")}</button>
+        <button data-tab="material" class="${tab === "material" ? "active" : ""}">${L("materialTab")}</button>
+        ${isAdmin ? `<button data-tab="settings" class="${tab === "settings" ? "active" : ""}">${L("examSettings")}</button>` : ""}
         ${isAdmin ? `<button data-tab="coadmins" class="${tab === "coadmins" ? "active" : ""}">${L("coadmins")}</button>` : ""}
       </nav>
       <main id="tab-body"></main>
     </div>
   `);
-  wrap.querySelector("#logout-btn").onclick = () => signOut(auth);
   wrap.querySelectorAll("[data-tab]").forEach((b) => {
     b.onclick = () => setState({ adminTab: b.dataset.tab });
   });
   const body = wrap.querySelector("#tab-body");
   if (tab === "candidates") body.appendChild(renderCandidatesTab());
   else if (tab === "questions") body.appendChild(renderQuestionsTab());
+  else if (tab === "material") body.appendChild(renderMaterialAdminTab());
+  else if (tab === "settings" && isAdmin) body.appendChild(renderExamSettingsTab());
   else if (tab === "coadmins" && isAdmin) body.appendChild(renderCoadminsTab());
+  return wrap;
+}
+
+function renderExamSettingsTab() {
+  const cfg = state.examConfig;
+  const wrap = el(`
+    <form id="exam-settings-form" class="card">
+      <h3>${L("sectionMinutesLabel")}</h3>
+      ${SECTIONS.map((s) => `
+        <label>${L(s)}<input type="number" name="min_${s}" min="1" value="${cfg.sectionMinutes[s]}" /></label>
+      `).join("")}
+      <div class="err" id="settings-msg"></div>
+      <button type="submit" class="primary">${L("saveSettings")}</button>
+    </form>
+  `);
+  wrap.onsubmit = async (e) => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const sectionMinutes = {};
+    SECTIONS.forEach((s) => { sectionMinutes[s] = Number(f.get(`min_${s}`)) || DEFAULT_SECTION_MINUTES[s]; });
+    await setDoc(doc(db, "settings", "examConfig"), { sectionMinutes, sectionOrder: SECTIONS }, { merge: true });
+    wrap.querySelector("#settings-msg").textContent = L("settingsSaved");
+    wrap.querySelector("#settings-msg").classList.remove("err");
+    wrap.querySelector("#settings-msg").classList.add("notice");
+  };
   return wrap;
 }
 
@@ -499,14 +566,69 @@ function renderCandidateResultPanel(c) {
     if (!snap.exists()) { body.textContent = "—"; return; }
     const a = snap.data();
     body.innerHTML = "";
-    state.questions.filter(q => a.answers && q.id in a.answers).forEach((q, i) => {
-      const given = a.answers[q.id];
+    const answers = a.answers || {};
+    const manualAnswers = a.manualAnswers || {};
+    state.questions.filter((q) => q.id in answers).forEach((q, i) => {
+      const given = answers[q.id];
       const correct = q.type === "truefalse" ? q.correctAnswer : q.correctIndex;
       const isRight = given === correct;
       const row = el(`<div class="review-row ${isRight ? "ok" : "bad"}"><b>${i + 1}.</b> ${escapeHtml(q.text[state.lang] || q.text.ar)}</div>`);
       body.appendChild(row);
     });
-    const summary = el(`<p><b>${L("score")}:</b> ${a.score} / ${a.totalPoints}</p>`);
+    body.appendChild(el(`<p><b>${L("autoScore")}:</b> ${a.autoScore ?? a.score ?? 0}</p>`));
+
+    const manualQs = state.questions.filter((q) => (q.type === "speaking" || q.type === "writing") && q.id in manualAnswers);
+    if (manualQs.length) {
+      const gradingForm = el(`<form id="grading-form" class="card"><h4>${L("manualGrading")}</h4></form>`);
+      const manualScores = { ...(a.manualScores || {}) };
+      manualQs.forEach((q, i) => {
+        const ans = manualAnswers[q.id];
+        const row = el(`<div class="review-row"></div>`);
+        row.appendChild(el(`<div><b>${i + 1}.</b> ${escapeHtml(q.text[state.lang] || q.text.ar)}</div>`));
+        if (q.type === "speaking") {
+          row.appendChild(ans?.audioUrl
+            ? el(`<audio controls src="${ans.audioUrl}"></audio>`)
+            : el(`<p class="hint">${L("noAnswerGiven")}</p>`));
+        } else {
+          row.appendChild(el(`<p class="writing-answer-view">${escapeHtml(ans?.text || "")}</p>`));
+          if (!ans?.text) row.appendChild(el(`<p class="hint">${L("noAnswerGiven")}</p>`));
+        }
+        const scoreInput = el(`<label>${L("scoreOutOf", { max: q.points ?? 1 })}<input type="number" min="0" max="${q.points ?? 1}" name="score_${q.id}" value="${manualScores[q.id] ?? 0}" /></label>`);
+        row.appendChild(scoreInput);
+        gradingForm.appendChild(row);
+      });
+      const gradeMsg = el(`<div class="err" id="grade-msg"></div>`);
+      gradingForm.appendChild(gradeMsg);
+      const saveBtn = el(`<button type="submit" class="primary">${L("saveGrading")}</button>`);
+      gradingForm.appendChild(saveBtn);
+      gradingForm.onsubmit = async (e) => {
+        e.preventDefault();
+        const f = new FormData(e.target);
+        const newManualScores = {};
+        let manualScore = 0;
+        manualQs.forEach((q) => {
+          const v = Math.max(0, Math.min(q.points ?? 1, Number(f.get(`score_${q.id}`)) || 0));
+          newManualScores[q.id] = v;
+          manualScore += v;
+        });
+        const autoScore = a.autoScore ?? a.score ?? 0;
+        await updateDoc(doc(db, "attempts", c.id), {
+          manualScores: newManualScores,
+          manualScore,
+          score: autoScore + manualScore,
+          examStatus: "graded",
+          gradedBy: state.user.uid,
+          gradedAt: serverTimestamp(),
+        });
+        gradeMsg.textContent = L("gradingSaved");
+        gradeMsg.classList.remove("err");
+        gradeMsg.classList.add("notice");
+      };
+      body.appendChild(gradingForm);
+    }
+
+    const total = (a.autoScore ?? a.score ?? 0) + (a.manualScore ?? 0);
+    const summary = el(`<p><b>${L("score")}:</b> ${total} / ${a.totalPoints}</p>`);
     body.appendChild(summary);
   });
   return wrap;
@@ -659,6 +781,90 @@ function renderNewCoadminForm() {
   return wrap;
 }
 
+// ---------- Training material tab (admin uploads PDF; shows read stats) ----------
+function renderMaterialAdminTab() {
+  const isAdmin = state.profile.role === "admin";
+  const wrap = el(`<div></div>`);
+  if (isAdmin) {
+    const form = el(`
+      <form id="material-form" class="card">
+        <label>${L("uploadMaterial")}<input type="file" name="file" accept="application/pdf" required /></label>
+        <div class="err" id="material-err"></div>
+        <button type="submit" class="primary">${L("save")}</button>
+      </form>
+    `);
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const f = new FormData(e.target);
+      const file = f.get("file");
+      const errBox = form.querySelector("#material-err");
+      errBox.textContent = L("uploadingFile");
+      errBox.classList.remove("notice");
+      try {
+        const path = `material/${Date.now()}-${file.name}`;
+        const r = storageRef(storage, path);
+        await uploadBytes(r, file);
+        const url = await getDownloadURL(r);
+        await setDoc(doc(db, "settings", "material"), { url, fileName: file.name, updatedAt: serverTimestamp() });
+        state.material = { url, fileName: file.name };
+        statusP.textContent = `${L("materialUploaded")}: ${file.name}`;
+        errBox.textContent = L("materialUploaded");
+        errBox.classList.add("notice");
+      } catch (err) {
+        errBox.textContent = err.message;
+      }
+    };
+    wrap.appendChild(form);
+  }
+  const statusP = el(`<p>${state.material?.fileName ? `${L("materialUploaded")}: ${escapeHtml(state.material.fileName)}` : L("noMaterial")}</p>`);
+  wrap.appendChild(statusP);
+
+  const statsHost = el(`
+    <div>
+      <h3>${L("materialStats")}</h3>
+      <table class="grid">
+        <thead><tr><th>${L("name")}</th><th>${L("sessionsCount")}</th><th>${L("totalTime")}</th><th>${L("maxPageReached")}</th><th>${L("lastRead")}</th></tr></thead>
+        <tbody id="material-stats-rows"><tr><td colspan="5">${L("loading")}</td></tr></tbody>
+      </table>
+    </div>
+  `);
+  wrap.appendChild(statsHost);
+
+  (async () => {
+    if (state.material == null) {
+      const snap = await getDoc(doc(db, "settings", "material"));
+      state.material = snap.exists() ? snap.data() : false;
+      if (state.material) statusP.textContent = `${L("materialUploaded")}: ${escapeHtml(state.material.fileName || "")}`;
+    }
+    const snap = await getDocs(collection(db, "materialSessions"));
+    const byUid = {};
+    snap.forEach((d) => {
+      const s = d.data();
+      if (!s.uid) return;
+      const g = byUid[s.uid] || (byUid[s.uid] = { name: s.name, sessions: 0, totalSec: 0, maxPage: 0, lastAt: 0 });
+      g.sessions += 1;
+      g.totalSec += s.durationSec || 0;
+      g.maxPage = Math.max(g.maxPage, s.maxPage || 0);
+      const at = s.lastActiveAt?.seconds || 0;
+      if (at > g.lastAt) g.lastAt = at;
+    });
+    const rows = statsHost.querySelector("#material-stats-rows");
+    rows.innerHTML = "";
+    const uids = Object.keys(byUid);
+    if (!uids.length) { rows.innerHTML = `<tr><td colspan="5">${L("neverRead")}</td></tr>`; return; }
+    const localeMap = { ar: "ar-IQ", ku: "en-GB", en: "en-US" };
+    uids.forEach((uid) => {
+      const g = byUid[uid];
+      const cand = state.candidates.find((c) => c.id === uid);
+      const name = cand?.name || g.name || uid;
+      const lastStr = g.lastAt ? new Date(g.lastAt * 1000).toLocaleString(localeMap[state.lang]) : "—";
+      rows.appendChild(el(`<tr><td>${escapeHtml(name)}</td><td>${g.sessions}</td><td>${fmtTime(g.totalSec)}</td><td>${g.maxPage}</td><td>${lastStr}</td></tr>`));
+    });
+  })();
+
+  return wrap;
+}
+
 // ---------- Questions tab (admin only can edit; coadmin read-only) ----------
 function renderQuestionsTab() {
   const isAdmin = state.profile.role === "admin";
@@ -668,7 +874,7 @@ function renderQuestionsTab() {
     seedBtn.onclick = async () => {
       seedBtn.disabled = true;
       for (const q of seedQuestions) {
-        await addDoc(collection(db, "questions"), { ...q, active: true, createdAt: serverTimestamp() });
+        await addDoc(collection(db, "questions"), { section: "reading", ...q, active: true, createdAt: serverTimestamp() });
       }
       alert(L("seeded"));
       seedBtn.disabled = false;
@@ -685,7 +891,7 @@ function renderQuestionsTab() {
   state.questions.forEach((q, i) => {
     const card = el(`
       <div class="q-card ${q.active === false ? "inactive" : ""}">
-        <div class="q-head"><span class="tag">${L(q.category)}</span> <span class="tag">${L(q.type)}</span> ${q.active === false ? `<span class="tag warn">${L("inactive")}</span>` : ""}</div>
+        <div class="q-head"><span class="tag section-tag">${L(q.section || "reading")}</span> <span class="tag">${L(q.category)}</span> <span class="tag">${L(q.type)}</span> ${q.active === false ? `<span class="tag warn">${L("inactive")}</span>` : ""}</div>
         <div class="q-text">${i + 1}. ${escapeHtml(q.text?.[state.lang] || q.text?.ar || "")}</div>
         ${q.imagePath ? `<img class="q-thumb" src="${q.imagePath}" />` : ""}
         <div class="q-answer">${answerPreview(q)}</div>
@@ -718,6 +924,9 @@ function renderQuestionsTab() {
 }
 
 function answerPreview(q) {
+  if (q.type === "speaking" || q.type === "writing") {
+    return `${L("scoreOutOf", { max: q.points ?? 1 })} — ${L("manualGrading")}`;
+  }
   if (q.type === "truefalse") {
     return `${L("correctAnswer")}: <b>${q.correctAnswer ? L("yes") : L("no")}</b>`;
   }
@@ -728,12 +937,18 @@ function answerPreview(q) {
   }).join("");
 }
 
+// Section a question type defaults into when first created/switched to.
+const TYPE_DEFAULT_SECTION = { speaking: "speaking", writing: "writing" };
+
 function renderQuestionForm(existing) {
   const imgFiles = [
     "image1.jpeg","image2.jpeg","image10.jpeg","image11.jpeg","image12.jpeg","image13.jpeg",
     "image14.jpeg","image16.jpeg","image17.jpeg","image18.jpeg","image20.png","image21.png",
     "image22.png","image23.jpeg","image24.jpeg","image25.jpeg","image26.jpeg","image27.jpeg",
   ];
+  // Listening audio is uploaded immediately on file select (Storage), then
+  // referenced by URL on submit — keeps the upload out of the form-submit path.
+  let pendingAudioPath = existing?.audioPath || "";
   const wrap = el(`
     <form id="new-q-form" class="card">
       <label>${L("questionType")}
@@ -741,7 +956,12 @@ function renderQuestionForm(existing) {
           <option value="mcq">${L("mcq")}</option>
           <option value="truefalse">${L("truefalse")}</option>
           <option value="image">${L("image")}</option>
+          <option value="speaking">${L("speaking")}</option>
+          <option value="writing">${L("writing")}</option>
         </select>
+      </label>
+      <label>${L("section")}
+        <select name="section">${SECTIONS.map((s) => `<option value="${s}">${L(s)}</option>`).join("")}</select>
       </label>
       <label>${L("category")}
         <select name="category">${CATEGORIES.map((c) => `<option value="${c}">${L(c)}</option>`).join("")}</select>
@@ -757,13 +977,20 @@ function renderQuestionForm(existing) {
   `);
   const extra = wrap.querySelector("#type-extra");
   const typeSel = wrap.querySelector("[name=type]");
+  const sectionSel = wrap.querySelector("[name=section]");
   if (existing) {
     typeSel.value = existing.type;
+    sectionSel.value = existing.section || "reading";
     wrap.querySelector("[name=category]").value = existing.category || CATEGORIES[0];
   }
   function renderExtra() {
     extra.innerHTML = "";
     const type = typeSel.value;
+    const section = sectionSel.value;
+    if (type === "speaking" || type === "writing") {
+      extra.appendChild(el(`<p class="hint">${L(type === "speaking" ? "speaking" : "writing")}: ${L("points")} = ${L("scoreOutOf", { max: "" })}. ${L("manualGrading")}.</p>`));
+      return;
+    }
     if (type === "mcq" || type === "image") {
       for (let i = 0; i < 4; i++) {
         extra.appendChild(el(`
@@ -814,8 +1041,43 @@ function renderQuestionForm(existing) {
         extra.querySelector("[name=correctAnswer]").value = String(!!existing.correctAnswer);
       }
     }
+    if (section === "reading") {
+      extra.appendChild(el(`
+        <label>${L("passageAr")}<textarea name="passage_ar" rows="3">${escapeHtml(existing?.passage?.ar || "")}</textarea></label>
+        <label>${L("passageKu")}<textarea name="passage_ku" rows="3">${escapeHtml(existing?.passage?.ku || "")}</textarea></label>
+        <label>${L("passageEn")}<textarea name="passage_en" rows="3">${escapeHtml(existing?.passage?.en || "")}</textarea></label>
+      `));
+    }
+    if (section === "listening") {
+      const audioWrap = el(`
+        <label>${L("chooseAudioFile")}
+          <input type="file" name="audio_file" accept="audio/*" />
+        </label>
+      `);
+      const status = el(`<p class="hint" id="audio-status">${pendingAudioPath ? L("materialUploaded") : ""}</p>`);
+      audioWrap.querySelector("input").onchange = async (ev) => {
+        const file = ev.target.files[0];
+        if (!file) return;
+        status.textContent = L("uploadingAudio");
+        try {
+          const path = `listening/${Date.now()}-${file.name}`;
+          const r = storageRef(storage, path);
+          await uploadBytes(r, file);
+          pendingAudioPath = await getDownloadURL(r);
+          status.textContent = L("materialUploaded");
+        } catch (err) {
+          status.textContent = err.message;
+        }
+      };
+      extra.appendChild(audioWrap);
+      extra.appendChild(status);
+    }
   }
-  typeSel.onchange = renderExtra;
+  typeSel.onchange = () => {
+    if (TYPE_DEFAULT_SECTION[typeSel.value]) sectionSel.value = TYPE_DEFAULT_SECTION[typeSel.value];
+    renderExtra();
+  };
+  sectionSel.onchange = renderExtra;
   renderExtra();
 
   wrap.onsubmit = async (e) => {
@@ -824,6 +1086,7 @@ function renderQuestionForm(existing) {
     const type = f.get("type");
     const data = {
       type,
+      section: f.get("section"),
       category: f.get("category"),
       points: Number(f.get("points")) || 1,
       text: { ar: f.get("text_ar"), ku: f.get("text_ku") || f.get("text_ar"), en: f.get("text_en") || f.get("text_ar") },
@@ -838,12 +1101,18 @@ function renderQuestionForm(existing) {
     } else if (type === "truefalse") {
       data.correctAnswer = f.get("correctAnswer") === "true";
     }
+    if (data.section === "reading" && (type === "mcq" || type === "truefalse" || type === "image")) {
+      const pAr = f.get("passage_ar"), pKu = f.get("passage_ku"), pEn = f.get("passage_en");
+      if (pAr || pKu || pEn) data.passage = { ar: pAr || "", ku: pKu || pAr || "", en: pEn || pAr || "" };
+    }
+    if (data.section === "listening" && pendingAudioPath) data.audioPath = pendingAudioPath;
     try {
       if (existing) {
         await updateDoc(doc(db, "questions", existing.id), data);
       } else {
         await addDoc(collection(db, "questions"), data);
         e.target.reset();
+        pendingAudioPath = "";
         renderExtra();
       }
     } catch (err) {
@@ -854,33 +1123,60 @@ function renderQuestionForm(existing) {
 }
 
 // ============================================================
-// CANDIDATE — EXAM
+// CANDIDATE — EXAM (TOEFL-style: reading/listening/speaking/writing sections)
 // ============================================================
-let examLocalAnswers = {};
+let examLocalAnswers = {};     // auto-graded answers: {qid: value}
+let examManualAnswers = {};    // speaking/writing answers: {qid: {audioUrl} | {text}}
+let examSectionIndex = 0;
 let examQIndex = 0;
+let examSectionDeadline = 0;   // ms epoch, when the current section auto-advances
+let examTimerInterval = null;
+// Per-question speaking recorder state, not persisted directly (only the
+// uploaded audioUrl is): { [qid]: "idle" | "recording" | "recorded" | "uploading" }
+let speakingState = {};
+let mediaRecorder = null;
+let recordedChunks = [];
+
+function groupBySections(activeQs) {
+  const order = state.examConfig.sectionOrder;
+  return order
+    .map((s) => ({ section: s, qs: activeQs.filter((q) => (q.section || "reading") === s) }))
+    .filter((g) => g.qs.length);
+}
+
+function fmtTime(totalSec) {
+  const s = Math.max(0, Math.round(totalSec));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}:${String(r).padStart(2, "0")}`;
+}
 
 function renderExam() {
   if (state.profile.blocked || state.profile.deleted) {
     return el(`<div class="card center-card"><p>${L("blocked")}</p></div>`);
   }
   if (["submitted", "graded"].includes(state.profile.examStatus)) {
+    stopExamTimer();
     return renderResult();
   }
   const activeQs = state.questions.filter((q) => q.active !== false);
   if (!state._examLoaded) {
-    // lazy-load questions once for candidates (they don't get live admin watcher)
     loadQuestionsForCandidate();
     return el(`<div class="card center-card">${L("loading")}</div>`);
   }
   if (!activeQs.length) return el(`<div class="card center-card">${L("noQuestions")}</div>`);
 
-  // Restore answers/position saved on the candidate's own profile so a
-  // refresh mid-exam doesn't wipe progress (previously it did — this was
-  // reported and is now fixed).
+  const sections = groupBySections(activeQs);
+
+  // Restore progress saved on the candidate's own profile so a refresh
+  // mid-exam doesn't wipe it.
   if (state._progressLoadedFor !== state.profile.id) {
     examLocalAnswers = state.profile.examProgress ? { ...state.profile.examProgress } : {};
-    examQIndex = Number.isInteger(state.profile.examQIndex)
-      ? Math.min(state.profile.examQIndex, activeQs.length - 1) : 0;
+    examManualAnswers = state.profile.examManualProgress ? { ...state.profile.examManualProgress } : {};
+    examSectionIndex = Number.isInteger(state.profile.examSectionIndex)
+      ? Math.min(state.profile.examSectionIndex, sections.length - 1) : 0;
+    examQIndex = Number.isInteger(state.profile.examQIndex) ? state.profile.examQIndex : 0;
+    examSectionDeadline = state.profile.examSectionDeadline || 0;
     state._progressLoadedFor = state.profile.id;
   }
 
@@ -889,41 +1185,96 @@ function renderExam() {
       <div class="card center-card">
         <h2>${L("appName")}</h2>
         <p>${escapeHtml(state.profile.name || "")}</p>
+        <button id="material-btn" class="ghost">${L("readMaterial")}</button>
         <button id="start-btn" class="primary">${L("startExam")}</button>
-        <div><button id="logout-btn" class="ghost">${L("logout")}</button></div>
       </div>
     `);
-    wrap.querySelector("#logout-btn").onclick = () => signOut(auth);
+    wrap.querySelector("#material-btn").onclick = () => setState({ route: "material" });
     wrap.querySelector("#start-btn").onclick = async () => {
-      await updateDoc(doc(db, "users", state.profile.id), { examStatus: "in_progress", startedAt: serverTimestamp() });
+      const deadline = Date.now() + (state.examConfig.sectionMinutes[sections[0].section] || 20) * 60000;
+      await updateDoc(doc(db, "users", state.profile.id), {
+        examStatus: "in_progress", startedAt: serverTimestamp(),
+        examSectionIndex: 0, examQIndex: 0, examSectionDeadline: deadline,
+      });
+      examSectionIndex = 0; examQIndex = 0; examSectionDeadline = deadline;
       setState({ profile: { ...state.profile, examStatus: "in_progress" } });
     };
     return wrap;
   }
 
-  const q = activeQs[examQIndex];
+  const curSection = sections[examSectionIndex];
+  if (!curSection) return el(`<div class="card center-card">${L("noQuestions")}</div>`);
+  if (examQIndex > curSection.qs.length - 1) examQIndex = curSection.qs.length - 1;
+  const q = curSection.qs[examQIndex];
+  const isLastQInSection = examQIndex === curSection.qs.length - 1;
+  const isLastSection = examSectionIndex === sections.length - 1;
+
   const wrap = el(`
     <div class="shell exam-shell">
-      <header class="topbar">
-        <div class="brand">${L("appName")}</div>
-        <button id="logout-btn" class="ghost">${L("logout")}</button>
+      <header class="topbar topbar-timer-only">
+        <div class="who" id="section-timer"></div>
       </header>
-      <div class="exam-progress">${L("questionOf", { n: examQIndex + 1, total: activeQs.length })}</div>
+      <div class="exam-progress">
+        ${L("sectionOf", { n: examSectionIndex + 1, total: sections.length, section: L(curSection.section) })}
+        · ${L("questionOf", { n: examQIndex + 1, total: curSection.qs.length })}
+      </div>
       <div class="card q-card-big">
+        ${q.passage?.[state.lang] || q.passage?.ar ? `<div class="passage">${escapeHtml(q.passage[state.lang] || q.passage.ar)}</div>` : ""}
+        ${q.audioPath ? `<audio class="q-audio" controls src="${q.audioPath}"></audio>` : ""}
         <div class="q-text">${escapeHtml(q.text[state.lang] || q.text.ar)}</div>
         ${q.imagePath ? `<img class="q-image" src="${q.imagePath}" />` : ""}
         <div id="q-options"></div>
       </div>
       <div class="row-actions exam-nav">
-        <button id="prev-btn" ${examQIndex === 0 ? "disabled" : ""}>${L("prev")}</button>
-        ${examQIndex === activeQs.length - 1
+        <button id="prev-btn" ${examQIndex === 0 && examSectionIndex === 0 ? "disabled" : ""}>${L("prev")}</button>
+        ${isLastQInSection && isLastSection
           ? `<button id="submit-btn" class="primary">${L("submitExam")}</button>`
-          : `<button id="next-btn" class="primary">${L("next")}</button>`}
+          : isLastQInSection
+            ? `<button id="next-section-btn" class="primary">${L("nextSection")}</button>`
+            : `<button id="next-btn" class="primary">${L("next")}</button>`}
       </div>
     </div>
   `);
-  wrap.querySelector("#logout-btn").onclick = () => signOut(auth);
-  const optHost = wrap.querySelector("#q-options");
+
+  renderQuestionAnswerUI(wrap.querySelector("#q-options"), q);
+
+  const prevBtn = wrap.querySelector("#prev-btn");
+  if (prevBtn) prevBtn.onclick = () => {
+    if (examQIndex > 0) { examQIndex -= 1; }
+    else if (examSectionIndex > 0) {
+      examSectionIndex -= 1;
+      examQIndex = sections[examSectionIndex].qs.length - 1;
+    }
+    saveExamProgress();
+    render();
+  };
+  const nextBtn = wrap.querySelector("#next-btn");
+  if (nextBtn) nextBtn.onclick = () => { examQIndex += 1; saveExamProgress(); render(); };
+  const nextSectionBtn = wrap.querySelector("#next-section-btn");
+  if (nextSectionBtn) nextSectionBtn.onclick = () => advanceSection(sections);
+  const submitBtn = wrap.querySelector("#submit-btn");
+  if (submitBtn) submitBtn.onclick = () => { if (confirm(L("submitConfirm"))) submitExam(activeQs); };
+
+  startExamTimer(sections);
+  return wrap;
+}
+
+function renderQuestionAnswerUI(optHost, q) {
+  if (q.type === "speaking") {
+    optHost.appendChild(renderSpeakingWidget(q));
+    return;
+  }
+  if (q.type === "writing") {
+    const ta = el(`<textarea class="writing-answer" rows="8" placeholder="${L("writeAnswerHere")}">${escapeHtml(examManualAnswers[q.id]?.text || "")}</textarea>`);
+    let saveTimer = null;
+    ta.oninput = () => {
+      examManualAnswers[q.id] = { text: ta.value };
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(saveExamProgress, 800);
+    };
+    optHost.appendChild(ta);
+    return;
+  }
   const opts = q.type === "truefalse"
     ? [{ label: L("yes"), value: true }, { label: L("no"), value: false }]
     : q.options.map((o, i) => ({ label: o[state.lang] || o.ar, value: i }));
@@ -937,18 +1288,109 @@ function renderExam() {
     };
     optHost.appendChild(optEl);
   });
-  const prevBtn = wrap.querySelector("#prev-btn");
-  if (prevBtn) prevBtn.onclick = () => { examQIndex = Math.max(0, examQIndex - 1); saveExamProgress(); render(); };
-  const nextBtn = wrap.querySelector("#next-btn");
-  if (nextBtn) nextBtn.onclick = () => { examQIndex = Math.min(activeQs.length - 1, examQIndex + 1); saveExamProgress(); render(); };
-  const submitBtn = wrap.querySelector("#submit-btn");
-  if (submitBtn) submitBtn.onclick = () => { if (confirm(L("submitConfirm"))) submitExam(activeQs); };
+}
+
+function renderSpeakingWidget(q) {
+  const existingUrl = examManualAnswers[q.id]?.audioUrl;
+  const st = speakingState[q.id] || (existingUrl ? "recorded" : "idle");
+  const wrap = el(`<div class="speaking-widget"></div>`);
+  if (st === "uploading") {
+    wrap.appendChild(el(`<p class="hint">${L("uploadingAudio")}</p>`));
+    return wrap;
+  }
+  if (st === "recording") {
+    const stopBtn = el(`<button type="button" class="primary">${L("stopRecording")}</button>`);
+    stopBtn.onclick = () => stopRecording(q.id);
+    wrap.appendChild(el(`<p class="hint recording-dot">${L("recording")}</p>`));
+    wrap.appendChild(stopBtn);
+    return wrap;
+  }
+  if (st === "recorded" && existingUrl) {
+    wrap.appendChild(el(`<audio controls src="${existingUrl}"></audio>`));
+    const reBtn = el(`<button type="button" class="ghost">${L("reRecord")}</button>`);
+    reBtn.onclick = () => startRecording(q.id);
+    wrap.appendChild(reBtn);
+    return wrap;
+  }
+  const recBtn = el(`<button type="button" class="primary">${L("record")}</button>`);
+  recBtn.onclick = () => startRecording(q.id);
+  wrap.appendChild(recBtn);
   return wrap;
+}
+
+async function startRecording(qid) {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    recordedChunks = [];
+    mediaRecorder = new MediaRecorder(stream);
+    mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) recordedChunks.push(e.data); };
+    mediaRecorder.onstop = async () => {
+      stream.getTracks().forEach((t) => t.stop());
+      const blob = new Blob(recordedChunks, { type: "audio/webm" });
+      speakingState[qid] = "uploading";
+      render();
+      try {
+        const path = `speaking/${state.profile.id}/${qid}.webm`;
+        const r = storageRef(storage, path);
+        await uploadBytes(r, blob);
+        const url = await getDownloadURL(r);
+        examManualAnswers[qid] = { audioUrl: url };
+        speakingState[qid] = "recorded";
+        saveExamProgress();
+      } catch (err) {
+        alert(`${L("error")}: ${err.message}`);
+        speakingState[qid] = "idle";
+      }
+      render();
+    };
+    mediaRecorder.start();
+    speakingState[qid] = "recording";
+    render();
+  } catch (err) {
+    alert(L("micPermissionDenied"));
+  }
+}
+function stopRecording(qid) {
+  if (mediaRecorder && mediaRecorder.state !== "inactive") mediaRecorder.stop();
+}
+
+function startExamTimer(sections) {
+  if (examTimerInterval) return; // already ticking
+  examTimerInterval = setInterval(() => {
+    const el = document.getElementById("section-timer");
+    if (!el) return; // navigated away from the exam view
+    const remaining = (examSectionDeadline - Date.now()) / 1000;
+    if (remaining <= 0) {
+      clearInterval(examTimerInterval);
+      examTimerInterval = null;
+      advanceSection(sections);
+      return;
+    }
+    el.textContent = L("sectionTimeLeft", { time: fmtTime(remaining) });
+  }, 1000);
+}
+function stopExamTimer() {
+  if (examTimerInterval) { clearInterval(examTimerInterval); examTimerInterval = null; }
+}
+
+function advanceSection(sections) {
+  stopExamTimer();
+  if (examSectionIndex >= sections.length - 1) {
+    submitExam(state.questions.filter((q) => q.active !== false));
+    return;
+  }
+  examSectionIndex += 1;
+  examQIndex = 0;
+  examSectionDeadline = Date.now() + (state.examConfig.sectionMinutes[sections[examSectionIndex].section] || 20) * 60000;
+  saveExamProgress();
+  render();
 }
 
 function saveExamProgress() {
   updateDoc(doc(db, "users", state.profile.id), {
-    examProgress: examLocalAnswers, examQIndex,
+    examProgress: examLocalAnswers,
+    examManualProgress: examManualAnswers,
+    examQIndex, examSectionIndex, examSectionDeadline,
   }).catch(() => {});
 }
 
@@ -962,48 +1404,189 @@ async function loadQuestionsForCandidate() {
 }
 
 async function submitExam(activeQs) {
-  let score = 0, total = 0;
+  stopExamTimer();
+  let autoScore = 0, totalPoints = 0;
+  const manualQuestions = [];
   activeQs.forEach((q) => {
-    total += q.points || 1;
+    totalPoints += q.points || 1;
+    if (q.type === "speaking" || q.type === "writing") {
+      manualQuestions.push(q.id);
+      return;
+    }
     const given = examLocalAnswers[q.id];
     const correct = q.type === "truefalse" ? q.correctAnswer : q.correctIndex;
-    if (given === correct) score += q.points || 1;
+    if (given === correct) autoScore += q.points || 1;
   });
+  const hasManual = manualQuestions.length > 0;
   await setDoc(doc(db, "attempts", state.profile.id), {
-    answers: examLocalAnswers, score, totalPoints: total, submittedAt: serverTimestamp(),
+    answers: examLocalAnswers,
+    manualAnswers: examManualAnswers,
+    autoScore, manualScore: 0, totalPoints,
+    score: autoScore,
+    examStatus: hasManual ? "submitted" : "submitted",
+    needsManualGrading: hasManual,
+    submittedAt: serverTimestamp(),
   });
-  // Note: score/totalPoints intentionally live only on the attempts doc —
-  // candidates are not allowed to write "score" on their own users doc
-  // (see firestore.rules), so staff read it from attempts instead.
+  // Note: score fields intentionally live only on the attempts doc —
+  // candidates can't write "score" on their own users doc (see firestore.rules).
   await updateDoc(doc(db, "users", state.profile.id), { examStatus: "submitted" });
-  setState({ profile: { ...state.profile, examStatus: "submitted", score, totalPoints: total } });
+  setState({ profile: { ...state.profile, examStatus: "submitted" } });
 }
 
 function renderResult() {
   const p = state.profile;
   const wrap = el(`
     <div class="shell">
-      <header class="topbar">
-        <div class="brand">${L("appName")}</div>
-        <button id="logout-btn" class="ghost">${L("logout")}</button>
-      </header>
       <div class="card center-card" id="result-card">
         <h2>${L("yourResult")}</h2>
         <p>${L("resultPending")}</p>
       </div>
     </div>
   `);
-  wrap.querySelector("#logout-btn").onclick = () => signOut(auth);
   getDoc(doc(db, "attempts", p.id)).then((snap) => {
     if (!snap.exists()) return;
     const a = snap.data();
     const card = wrap.querySelector("#result-card");
+    if (a.needsManualGrading && a.examStatus !== "graded") {
+      card.innerHTML = `<h2>${L("yourResult")}</h2><p>${L("pendingGrading")}</p>`;
+      return;
+    }
+    const total = (a.autoScore ?? a.score ?? 0) + (a.manualScore ?? 0);
     card.innerHTML = `
       <h2>${L("yourResult")}</h2>
-      <p style="font-size:32px;font-weight:700;">${a.score} / ${a.totalPoints}</p>
+      <p style="font-size:32px;font-weight:700;">${total} / ${a.totalPoints}</p>
     `;
   });
   return wrap;
+}
+
+// ============================================================
+// CANDIDATE — TRAINING MATERIAL (read-tracked PDF viewer)
+// ============================================================
+// Page navigation here deliberately does NOT go through the app's global
+// render() — that wipes and rebuilds the whole DOM (including the <canvas>),
+// which would fight the pdf.js render loop. This view manages its own DOM
+// via closures instead, same pattern as the in-form widgets above.
+let materialPdfDoc = null;
+let materialSessionId = null;
+let materialCurrentPage = 1;
+let materialPageCount = 1;
+let materialPagesTime = {};
+let materialPageStartTs = 0;
+let materialOpenedAt = 0;
+let materialAutosaveInterval = null;
+
+function renderMaterialViewer() {
+  const wrap = el(`
+    <div class="shell">
+      <header class="topbar topbar-timer-only">
+        <button id="back-btn" class="ghost">${L("backToExam")}</button>
+      </header>
+      <div class="card center-card" id="material-body">${L("loading")}</div>
+    </div>
+  `);
+  wrap.querySelector("#back-btn").onclick = () => { stopMaterialTracking(); setState({ route: "exam" }); };
+  loadMaterialAndRender(wrap.querySelector("#material-body"));
+  return wrap;
+}
+
+async function loadMaterialAndRender(body) {
+  if (state.material == null) {
+    const snap = await getDoc(doc(db, "settings", "material"));
+    state.material = snap.exists() ? snap.data() : false;
+  }
+  if (!state.material) { body.innerHTML = `<p>${L("noMaterial")}</p>`; return; }
+
+  body.innerHTML = `
+    <div class="material-toolbar">
+      <button id="prev-page">${L("prevPage")}</button>
+      <span id="page-label"></span>
+      <button id="next-page">${L("nextPage")}</button>
+    </div>
+    <div class="pdf-canvas-wrap"><canvas id="pdf-canvas"></canvas></div>
+  `;
+  const prevBtn = body.querySelector("#prev-page");
+  const nextBtn = body.querySelector("#next-page");
+  const label = body.querySelector("#page-label");
+  const canvas = body.querySelector("#pdf-canvas");
+
+  let pdfjsLib;
+  try {
+    pdfjsLib = await import("https://cdn.jsdelivr.net/npm/pdfjs-dist@4.6.82/build/pdf.min.mjs");
+    pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.6.82/build/pdf.worker.min.mjs";
+    materialPdfDoc = await pdfjsLib.getDocument(state.material.url).promise;
+  } catch (err) {
+    body.innerHTML = `<p class="err">${err.message}</p>`;
+    return;
+  }
+  materialPageCount = materialPdfDoc.numPages;
+  materialCurrentPage = 1;
+  materialPagesTime = {};
+  materialOpenedAt = Date.now();
+  materialPageStartTs = Date.now();
+
+  const sessionRef = await addDoc(collection(db, "materialSessions"), {
+    uid: state.profile.id, name: state.profile.name || "",
+    openedAt: serverTimestamp(), lastActiveAt: serverTimestamp(),
+    pages: {}, maxPage: 1, pageCount: materialPageCount, durationSec: 0,
+  });
+  materialSessionId = sessionRef.id;
+
+  async function renderPage(n) {
+    const page = await materialPdfDoc.getPage(n);
+    const viewport = page.getViewport({ scale: 1.3 });
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+    label.textContent = L("pageOf", { n, total: materialPageCount });
+    prevBtn.disabled = n <= 1;
+    nextBtn.disabled = n >= materialPageCount;
+  }
+  function trackPageChange(newPage) {
+    const now = Date.now();
+    const elapsed = (now - materialPageStartTs) / 1000;
+    materialPagesTime[materialCurrentPage] = (materialPagesTime[materialCurrentPage] || 0) + elapsed;
+    materialCurrentPage = newPage;
+    materialPageStartTs = now;
+  }
+  prevBtn.onclick = async () => {
+    if (materialCurrentPage <= 1) return;
+    trackPageChange(materialCurrentPage - 1);
+    await renderPage(materialCurrentPage);
+    saveMaterialProgress();
+  };
+  nextBtn.onclick = async () => {
+    if (materialCurrentPage >= materialPageCount) return;
+    trackPageChange(materialCurrentPage + 1);
+    await renderPage(materialCurrentPage);
+    saveMaterialProgress();
+  };
+  await renderPage(1);
+
+  if (materialAutosaveInterval) clearInterval(materialAutosaveInterval);
+  materialAutosaveInterval = setInterval(saveMaterialProgress, 5000);
+  window.addEventListener("beforeunload", saveMaterialProgress);
+}
+
+function saveMaterialProgress() {
+  if (!materialSessionId) return;
+  const now = Date.now();
+  const liveElapsed = (now - materialPageStartTs) / 1000;
+  const pages = { ...materialPagesTime, [materialCurrentPage]: (materialPagesTime[materialCurrentPage] || 0) + liveElapsed };
+  const maxPage = Math.max(materialCurrentPage, ...Object.keys(pages).map(Number));
+  updateDoc(doc(db, "materialSessions", materialSessionId), {
+    pages, maxPage, durationSec: (now - materialOpenedAt) / 1000, lastActiveAt: serverTimestamp(),
+  }).catch(() => {});
+}
+
+function stopMaterialTracking() {
+  if (materialAutosaveInterval) { clearInterval(materialAutosaveInterval); materialAutosaveInterval = null; }
+  window.removeEventListener("beforeunload", saveMaterialProgress);
+  if (materialSessionId) {
+    saveMaterialProgress();
+    updateDoc(doc(db, "materialSessions", materialSessionId), { closedAt: serverTimestamp() }).catch(() => {});
+    materialSessionId = null;
+  }
 }
 
 render();

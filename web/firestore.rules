@@ -42,7 +42,39 @@ service cloud.firestore {
 
     match /attempts/{uid} {
       allow read: if isSignedIn() && (request.auth.uid == uid || isStaff());
-      allow create, update: if isSignedIn() && request.auth.uid == uid;
+      // Candidates submit their own attempt (auto-graded reading/listening
+      // fields included) but can never set manual-grading fields or mark
+      // themselves "graded" — that's staff-only, done from the admin grading
+      // panel (see renderCandidateResultPanel in app.js).
+      allow create: if isSignedIn() && request.auth.uid == uid
+        && request.resource.data.examStatus != 'graded'
+        && !('manualScores' in request.resource.data)
+        && !('gradedBy' in request.resource.data)
+        && !('gradedAt' in request.resource.data);
+      allow update: if isSignedIn() && request.auth.uid == uid
+        && resource.data.examStatus != 'graded'
+        && request.resource.data.examStatus != 'graded'
+        && !request.resource.data.diff(resource.data).affectedKeys()
+              .hasAny(['manualScores', 'manualScore', 'gradedBy', 'gradedAt']);
+      allow update: if isStaff();
+    }
+
+    // Single shared docs: settings/examConfig (section timers) and
+    // settings/material (training file metadata) — admin-editable, staff+
+    // candidates can read.
+    match /settings/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // One doc per candidate reading session of the training material —
+    // logs open time, per-page dwell time, close time. Candidates can only
+    // read/write their OWN sessions; staff read all for the stats view.
+    match /materialSessions/{id} {
+      allow read: if isSignedIn() && (resource.data.uid == request.auth.uid || isStaff());
+      allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
+      allow update: if isSignedIn() && resource.data.uid == request.auth.uid
+        && request.resource.data.uid == request.auth.uid;
     }
 
     // Best-effort device block list: checked right after sign-in so a
