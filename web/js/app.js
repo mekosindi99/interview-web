@@ -116,6 +116,7 @@ onAuthStateChanged(auth, async (user) => {
     if (deviceId !== profile.deviceId) {
       updateDoc(doc(db, "users", user.uid), { deviceId }).catch(() => {});
     }
+    logLoginDevice(user);
   }
   setState({
     user,
@@ -227,6 +228,24 @@ function getDeviceId() {
     localStorage.setItem("device_id", id);
   }
   return id;
+}
+
+// Records this device (IP + User-Agent, read server-side from the raw
+// request — not anything the client claims) against the candidate's
+// profile, so staff can see every device/browser they've logged in from
+// (see server/index.js's /log-login). Best-effort — never blocks sign-in.
+async function logLoginDevice(user) {
+  if (!ADMIN_SERVER_URL) return;
+  try {
+    const token = await user.getIdToken();
+    await fetch(`${ADMIN_SERVER_URL}/log-login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ deviceId: getDeviceId() }),
+    });
+  } catch (err) {
+    console.warn("login device logging failed", err);
+  }
 }
 async function isFingerprintBlocked() {
   try {
@@ -752,6 +771,9 @@ function renderCandidatesTab() {
       btn.onclick = () => setState({ adminTab: "candidates", viewCandidate: c.id });
       actions.appendChild(btn);
     }
+    const devicesBtn = el(`<button class="link">${L("viewDevices")}</button>`);
+    devicesBtn.onclick = () => setState({ adminTab: "candidates", viewCandidateDevices: c.id });
+    actions.appendChild(devicesBtn);
     const blockBtn = el(`<button class="link warn">${c.blocked ? L("unblock") : L("block")}</button>`);
     blockBtn.onclick = async () => {
       const blocking = !c.blocked;
@@ -776,6 +798,52 @@ function renderCandidatesTab() {
     const c = state.candidates.find((x) => x.id === state.viewCandidate);
     if (c) wrap.appendChild(renderCandidateResultPanel(c));
   }
+  if (state.viewCandidateDevices) {
+    const c = state.candidates.find((x) => x.id === state.viewCandidateDevices);
+    if (c) wrap.appendChild(renderCandidateDevicesPanel(c));
+  }
+  return wrap;
+}
+
+const DEVICE_TYPE_KEY = { mobile: "deviceTypeMobile", tablet: "deviceTypeTablet", desktop: "deviceTypeDesktop" };
+
+function renderCandidateDevicesPanel(c) {
+  const wrap = el(`<div class="card"><h3>${escapeHtml(c.name)} — ${L("viewDevices")}</h3><div id="devices-body">${L("loading")}</div></div>`);
+  const localeMap = { ar: "ar-IQ", ku: "en-GB", en: "en-US" };
+  getDocs(collection(db, "users", c.id, "loginDevices")).then((snap) => {
+    const body = wrap.querySelector("#devices-body");
+    body.innerHTML = "";
+    if (snap.empty) { body.textContent = L("noDevicesYet"); return; }
+    const list = [];
+    snap.forEach((d) => list.push(d.data()));
+    list.sort((a, b) => (b.lastSeenAt?.seconds || 0) - (a.lastSeenAt?.seconds || 0));
+    if (list.length > 1) body.appendChild(el(`<p class="hint" style="color:var(--bad)">${L("multipleDevicesWarning", { n: list.length })}</p>`));
+    const tableWrap = el(`
+      <div class="table-scroll">
+        <table class="grid">
+          <thead><tr>
+            <th>${L("deviceTypeLabel")}</th><th>${L("browserLabel")}</th><th>${L("ipLabel")}</th>
+            <th>${L("lastSeenLabel")}</th><th>${L("loginCountLabel")}</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    `);
+    const tbody = tableWrap.querySelector("tbody");
+    list.forEach((d) => {
+      const lastStr = d.lastSeenAt?.seconds ? new Date(d.lastSeenAt.seconds * 1000).toLocaleString(localeMap[state.lang]) : "—";
+      tbody.appendChild(el(`
+        <tr>
+          <td>${L(DEVICE_TYPE_KEY[d.deviceType] || "deviceTypeDesktop")}</td>
+          <td>${escapeHtml(d.browser || "—")}</td>
+          <td class="mono">${escapeHtml(d.ip || "—")}</td>
+          <td>${lastStr}</td>
+          <td>${d.loginCount ?? 1}</td>
+        </tr>
+      `));
+    });
+    body.appendChild(tableWrap);
+  });
   return wrap;
 }
 

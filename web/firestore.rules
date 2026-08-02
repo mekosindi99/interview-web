@@ -87,5 +87,13 @@ service cloud.firestore {
       allow read: if isSignedIn();
       allow write: if isStaff();
     }
+
+    // Login-device fingerprints (IP/User-Agent/device type/browser), one
+    // doc per device a candidate has signed in from. Always written by the
+    // admin server (server/index.js's /log-login) via the Admin SDK, which
+    // bypasses these rules entirely — this only governs who can READ them.
+    match /users/{uid}/loginDevices/{deviceId} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || isStaff());
+    }
   }
 }

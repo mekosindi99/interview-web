@@ -71,10 +71,30 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:5173,ht
   .split(",").map((s) => s.trim());
 
 const app = express();
+// Render sits behind a reverse proxy — without this, req.ip is the proxy's
+// internal address, not the real visitor IP that the "X-Forwarded-For"
+// header carries.
+app.set("trust proxy", true);
 app.use(cors({ origin: allowedOrigins }));
 app.use(express.json());
 
 app.get("/", (_req, res) => res.json({ ok: true }));
+
+// Rough device-type/browser guess from a User-Agent string — good enough
+// for the admin's "which devices did this candidate log in from" view,
+// not meant to be a precise UA parser.
+function parseUserAgent(ua) {
+  const isTablet = /iPad|Tablet/i.test(ua);
+  const isMobile = !isTablet && /Mobi|Android|iPhone/i.test(ua);
+  const deviceType = isTablet ? "tablet" : isMobile ? "mobile" : "desktop";
+  let browser = "Other";
+  if (/Edg\//.test(ua)) browser = "Edge";
+  else if (/OPR\/|Opera/.test(ua)) browser = "Opera";
+  else if (/Chrome\//.test(ua) && !/Chromium\//.test(ua)) browser = "Chrome";
+  else if (/Firefox\//.test(ua)) browser = "Firefox";
+  else if (/Safari\//.test(ua) && !/Chrome\//.test(ua)) browser = "Safari";
+  return { deviceType, browser };
+}
 
 // Verifies the caller is a signed-in admin (checked against Firestore, same
 // source of truth the site's own security rules use).
@@ -110,6 +130,35 @@ async function requireSignedIn(req, res, next) {
     res.status(401).json({ error: "invalid token" });
   }
 }
+
+// Records/updates a login-device fingerprint for the signed-in user —
+// IP, User-Agent-derived device type/browser, first/last seen, login count.
+// Written with the Admin SDK (bypasses Firestore rules entirely), keyed by
+// the same client-generated device id already used for the block-list
+// feature, under users/{uid}/loginDevices/{deviceId}. The client can't lie
+// about its own IP or User-Agent here since both come from the raw HTTP
+// request the server itself received, not anything the client claims.
+app.post("/log-login", requireSignedIn, async (req, res) => {
+  try {
+    const deviceId = String(req.body?.deviceId || "").slice(0, 200);
+    if (!deviceId) return res.status(400).json({ error: "missing deviceId" });
+    const ip = String(req.headers["x-forwarded-for"] || req.ip || "").split(",")[0].trim();
+    const ua = req.headers["user-agent"] || "";
+    const { deviceType, browser } = parseUserAgent(ua);
+    const ref = db.collection("users").doc(req.uid).collection("loginDevices").doc(deviceId);
+    const snap = await ref.get();
+    await ref.set({
+      deviceId, ip, userAgent: ua, deviceType, browser,
+      lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
+      firstSeenAt: snap.exists ? snap.data().firstSeenAt : admin.firestore.FieldValue.serverTimestamp(),
+      loginCount: admin.firestore.FieldValue.increment(1),
+    }, { merge: true });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("log-login failed", err);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // Candidate's own speaking-answer recording — flat filename
 // speaking__{verifiedUid}__{qid}.webm, made link-readable, URL returned for
