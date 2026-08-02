@@ -610,14 +610,90 @@ function makeHardDeleteBtn(c) {
   return btn;
 }
 
+// Score as a 0..1 fraction for a candidate, or -1 if they have no scoreable
+// attempt yet — used for both sorting and the distribution chart below.
+function candidateScoreFraction(c) {
+  const att = state.attempts[c.id];
+  if (!att || !att.totalPoints) return -1;
+  return ((att.autoScore ?? att.score ?? 0) + (att.manualScore ?? 0)) / att.totalPoints;
+}
+
+function renderDashboardStats(visible) {
+  const wrap = el(`<div class="card"></div>`);
+  const completedCount = visible.filter((c) => ["submitted", "graded"].includes(c.examStatus)).length;
+  const blockedCount = visible.filter((c) => c.blocked).length;
+  const scored = visible.filter((c) => candidateScoreFraction(c) >= 0);
+  const avgPct = scored.length
+    ? Math.round(scored.reduce((sum, c) => sum + candidateScoreFraction(c), 0) / scored.length * 100)
+    : null;
+  wrap.innerHTML = `
+    <h3>${L("dashboardStatsTitle")}</h3>
+    <div class="stat-row">
+      <div class="stat-box"><div class="stat-num">${visible.length}</div><div class="stat-lbl">${L("candidates")}</div></div>
+      <div class="stat-box"><div class="stat-num">${completedCount}</div><div class="stat-lbl">${L("completedCount")}</div></div>
+      <div class="stat-box"><div class="stat-num">${blockedCount}</div><div class="stat-lbl">${L("blocked")}</div></div>
+      <div class="stat-box"><div class="stat-num">${avgPct == null ? "—" : avgPct + "%"}</div><div class="stat-lbl">${L("avgScoreLabel")}</div></div>
+    </div>
+  `;
+  if (scored.length) {
+    const bucketLabels = ["0-20%", "21-40%", "41-60%", "61-80%", "81-100%"];
+    const buckets = [0, 0, 0, 0, 0];
+    scored.forEach((c) => { buckets[Math.min(4, Math.floor(candidateScoreFraction(c) * 100 / 20))] += 1; });
+    const max = Math.max(...buckets, 1);
+    const chart = el(`<div class="score-chart"></div>`);
+    buckets.forEach((count, i) => {
+      chart.appendChild(el(`
+        <div class="score-chart-row">
+          <span class="score-chart-lbl">${bucketLabels[i]}</span>
+          <div class="score-chart-bar-track"><div class="score-chart-bar" style="width:${(count / max) * 100}%"></div></div>
+          <span class="score-chart-count">${count}</span>
+        </div>
+      `));
+    });
+    wrap.appendChild(el(`<h3 style="margin-top:16px">${L("scoreDistributionTitle")}</h3>`));
+    wrap.appendChild(chart);
+  }
+  return wrap;
+}
+
 function renderCandidatesTab() {
   const showRemoved = !!state.showRemovedCandidates;
-  const visible = state.candidates.filter((c) => showRemoved ? c.deleted : !c.deleted);
-  const wrap = el(`
+  let visible = state.candidates.filter((c) => showRemoved ? c.deleted : !c.deleted);
+
+  const wrap = el(`<div></div>`);
+  if (!showRemoved) wrap.appendChild(renderDashboardStats(visible));
+
+  const filterStatus = state.candidateFilterStatus || "all";
+  const sortBy = state.candidateSortBy || "recent";
+  if (filterStatus !== "all") visible = visible.filter((c) => (c.examStatus || "not_started") === filterStatus);
+  const durationOf = (c) => state.attempts[c.id]?.durationSec ?? Infinity;
+  if (sortBy === "nameAsc") visible = [...visible].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  else if (sortBy === "scoreDesc") visible = [...visible].sort((a, b) => candidateScoreFraction(b) - candidateScoreFraction(a));
+  else if (sortBy === "scoreAsc") visible = [...visible].sort((a, b) => candidateScoreFraction(a) - candidateScoreFraction(b));
+  else if (sortBy === "durationAsc") visible = [...visible].sort((a, b) => durationOf(a) - durationOf(b));
+  // "recent" (default) keeps watchCandidates()'s own createdAt-desc order.
+
+  const toolbar = el(`
     <div>
       <button id="new-cand-btn" class="primary">${L("createCandidate")}</button>
       <button id="toggle-removed-btn" class="ghost">${showRemoved ? L("candidates") : L("removedCandidates")}</button>
       <div id="new-cand-form"></div>
+      <div class="row-actions" style="margin:12px 0">
+        <select id="filter-status">
+          <option value="all">${L("filterAll")}</option>
+          <option value="not_started">${L("notStarted")}</option>
+          <option value="in_progress">${L("inProgress")}</option>
+          <option value="submitted">${L("submitted")}</option>
+          <option value="graded">${L("graded")}</option>
+        </select>
+        <select id="sort-by">
+          <option value="recent">${L("sortRecent")}</option>
+          <option value="nameAsc">${L("sortNameAsc")}</option>
+          <option value="scoreDesc">${L("sortScoreDesc")}</option>
+          <option value="scoreAsc">${L("sortScoreAsc")}</option>
+          <option value="durationAsc">${L("sortDurationAsc")}</option>
+        </select>
+      </div>
       <table class="grid">
         <thead><tr>
           <th>${L("name")}</th><th>${L("phone")}</th><th>${L("password")}</th>
@@ -627,13 +703,18 @@ function renderCandidatesTab() {
       </table>
     </div>
   `);
-  wrap.querySelector("#new-cand-btn").onclick = () => {
-    const formHost = wrap.querySelector("#new-cand-form");
+  toolbar.querySelector("#filter-status").value = filterStatus;
+  toolbar.querySelector("#sort-by").value = sortBy;
+  toolbar.querySelector("#filter-status").onchange = (e) => setState({ candidateFilterStatus: e.target.value });
+  toolbar.querySelector("#sort-by").onchange = (e) => setState({ candidateSortBy: e.target.value });
+  wrap.appendChild(toolbar);
+  toolbar.querySelector("#new-cand-btn").onclick = () => {
+    const formHost = toolbar.querySelector("#new-cand-form");
     formHost.innerHTML = "";
     formHost.appendChild(renderNewCandidateForm());
   };
-  wrap.querySelector("#toggle-removed-btn").onclick = () => setState({ showRemovedCandidates: !showRemoved });
-  const rows = wrap.querySelector("#cand-rows");
+  toolbar.querySelector("#toggle-removed-btn").onclick = () => setState({ showRemovedCandidates: !showRemoved });
+  const rows = toolbar.querySelector("#cand-rows");
   visible.forEach((c) => {
     const att = state.attempts[c.id];
     const tr = el(`
@@ -1697,6 +1778,10 @@ function renderResult() {
   const p = state.profile;
   const wrap = el(`
     <div class="shell">
+      <div class="row-actions" style="justify-content:center;margin-bottom:4px">
+        <button id="material-btn-result" class="ghost">${L("readMaterial")}</button>
+      </div>
+      <div class="card center-card" id="profile-info"></div>
       <div class="card center-card" id="result-summary">
         <h2>${L("yourResult")}</h2>
         <p>${L("loading")}</p>
@@ -1704,12 +1789,26 @@ function renderResult() {
       <div id="result-review"></div>
     </div>
   `);
+  wrap.querySelector("#material-btn-result").onclick = () => setState({ route: "material" });
+  const localeMap = { ar: "ar-IQ", ku: "en-GB", en: "en-US" };
+  wrap.querySelector("#profile-info").innerHTML = `
+    <h3>${escapeHtml(p.name || "")}</h3>
+    <p class="hint">${escapeHtml(p.phone || "")}</p>
+  `;
   getDoc(doc(db, "attempts", p.id)).then((snap) => {
     if (!snap.exists()) return;
     const a = snap.data();
     const graded = a.examStatus === "graded";
     const pendingManual = a.needsManualGrading && !graded;
     const total = (a.autoScore ?? a.score ?? 0) + (a.manualScore ?? 0);
+    const submittedStr = a.submittedAt?.seconds
+      ? new Date(a.submittedAt.seconds * 1000).toLocaleString(localeMap[state.lang])
+      : "—";
+    wrap.querySelector("#profile-info").innerHTML += `
+      <p><b>${L("status")}:</b> ${L(EXAM_STATUS_KEY[a.examStatus] || "submitted")}</p>
+      <p><b>${L("submittedAtLabel")}:</b> ${submittedStr}</p>
+      ${Number.isFinite(a.durationSec) ? `<p><b>${L("examDurationLabel")}:</b> ${fmtTime(a.durationSec)}</p>` : ""}
+    `;
     wrap.querySelector("#result-summary").innerHTML = `
       <h2>${L("yourResult")}</h2>
       <p style="font-size:32px;font-weight:700;">${total} / ${a.totalPoints}</p>
