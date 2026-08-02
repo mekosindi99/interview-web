@@ -163,6 +163,7 @@ export const t = {
     neverRead: "لم يفتح الملف بعد",
     backToExam: "رجوع",
     uploadingFile: "جاري رفع الملف...",
+    uploadServerMissing: "رفع الملفات غير متاح: سيرفر الرفع (server/) غير مربوط — أضف رابطه بـ firebase-config.js.",
   },
   ku: {
     appName: "مقابلة",
@@ -314,6 +315,7 @@ export const t = {
     neverRead: "فایل هێشتا نەهاتیە ڤەکرن",
     backToExam: "ڤەگەڕ",
     uploadingFile: "بارکرنا فایلی...",
+    uploadServerMissing: "بارکرنا فایلان ئامادە نینه: سیرڤەرێ بارکرنێ (server/) نەهاتیە گرێدان.",
   },
   en: {
     appName: "Interview",
@@ -467,6 +469,7 @@ export const t = {
     neverRead: "Hasn't opened the file yet",
     backToExam: "Back",
     uploadingFile: "Uploading file...",
+    uploadServerMissing: "File uploads unavailable: the upload server (server/) isn't wired up — add its URL to firebase-config.js.",
   },
 };
 

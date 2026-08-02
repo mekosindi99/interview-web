@@ -11,14 +11,28 @@ import {
   getFirestore, doc, getDoc, setDoc, updateDoc, addDoc, deleteDoc,
   collection, getDocs, query, where, orderBy, serverTimestamp, onSnapshot,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
-import {
-  getStorage, ref as storageRef, uploadBytes, getDownloadURL,
-} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js";
-
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const storage = getStorage(app);
+
+// File uploads (speaking recordings, listening audio, training PDF) go
+// through the admin server to Google Drive, not Firebase Storage — the
+// project is on the free Spark plan and Storage now requires Blaze. See
+// server/README.md for the Drive folder/service-account setup this needs.
+async function uploadViaServer(path, file) {
+  if (!ADMIN_SERVER_URL) throw new Error(L("uploadServerMissing"));
+  const fd = new FormData();
+  fd.append("file", file);
+  const token = await state.user.getIdToken();
+  const res = await fetch(`${ADMIN_SERVER_URL}${path}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: fd,
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || res.statusText);
+  return body;
+}
 // Explicit local persistence: keep the session in this browser across tab
 // closes / restarts, so the login screen isn't shown again on the same
 // device until the user explicitly signs out.
@@ -801,13 +815,10 @@ function renderMaterialAdminTab() {
       errBox.textContent = L("uploadingFile");
       errBox.classList.remove("notice");
       try {
-        const path = `material/${Date.now()}-${file.name}`;
-        const r = storageRef(storage, path);
-        await uploadBytes(r, file);
-        const url = await getDownloadURL(r);
-        await setDoc(doc(db, "settings", "material"), { url, fileName: file.name, updatedAt: serverTimestamp() });
-        state.material = { url, fileName: file.name };
-        statusP.textContent = `${L("materialUploaded")}: ${file.name}`;
+        const { fileId, fileName } = await uploadViaServer("/uploads/material", file);
+        await setDoc(doc(db, "settings", "material"), { fileId, fileName, updatedAt: serverTimestamp() });
+        state.material = { fileId, fileName };
+        statusP.textContent = `${L("materialUploaded")}: ${fileName}`;
         errBox.textContent = L("materialUploaded");
         errBox.classList.add("notice");
       } catch (err) {
@@ -1060,10 +1071,8 @@ function renderQuestionForm(existing) {
         if (!file) return;
         status.textContent = L("uploadingAudio");
         try {
-          const path = `listening/${Date.now()}-${file.name}`;
-          const r = storageRef(storage, path);
-          await uploadBytes(r, file);
-          pendingAudioPath = await getDownloadURL(r);
+          const { url } = await uploadViaServer("/uploads/listening", file);
+          pendingAudioPath = url;
           status.textContent = L("materialUploaded");
         } catch (err) {
           status.textContent = err.message;
@@ -1330,10 +1339,7 @@ async function startRecording(qid) {
       speakingState[qid] = "uploading";
       render();
       try {
-        const path = `speaking/${state.profile.id}/${qid}.webm`;
-        const r = storageRef(storage, path);
-        await uploadBytes(r, blob);
-        const url = await getDownloadURL(r);
+        const { url } = await uploadViaServer(`/uploads/speaking/${qid}`, blob);
         examManualAnswers[qid] = { audioUrl: url };
         speakingState[qid] = "recorded";
         saveExamProgress();
@@ -1514,7 +1520,8 @@ async function loadMaterialAndRender(body) {
   try {
     pdfjsLib = await import("https://cdn.jsdelivr.net/npm/pdfjs-dist@4.6.82/build/pdf.min.mjs");
     pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.6.82/build/pdf.worker.min.mjs";
-    materialPdfDoc = await pdfjsLib.getDocument(state.material.url).promise;
+    if (!ADMIN_SERVER_URL) throw new Error(L("uploadServerMissing"));
+    materialPdfDoc = await pdfjsLib.getDocument(`${ADMIN_SERVER_URL}/material/${state.material.fileId}`).promise;
   } catch (err) {
     body.innerHTML = `<p class="err">${err.message}</p>`;
     return;

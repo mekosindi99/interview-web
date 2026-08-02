@@ -11,3 +11,5 @@ services:
         sync: false
       - key: ALLOWED_ORIGINS
         value: https://interview.sonbola.shop,http://localhost:5173
+      - key: DRIVE_FOLDER_ID
+        sync: false

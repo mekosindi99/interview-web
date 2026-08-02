@@ -36,3 +36,29 @@
    بدون `/` بالآخر)
 3. خلص — فيه GitHub Action (`.github/workflows/keepalive.yml`) يبينغ
    السيرفر كل 5 دقايق تلقائياً ومجاناً.
+
+## 5) رفع الملفات عبر Google Drive (تسجيلات المحادثة، صوت الاستماع، ملف التدريب)
+
+المشروع على خطة Firebase المجانية (Spark) اللي ما تدعم Storage، فرفع الملفات
+يمر عبر هذا السيرفر إلى Google Drive بدل Firebase Storage. يحتاج إعداد
+لمرة وحدة:
+
+1. **فعّل Google Drive API**: [Google Cloud Console](https://console.cloud.google.com/apis/library/drive.googleapis.com)
+   → اختر نفس مشروع Firebase تبعك (`interview-3f9f3`) → **Enable**.
+2. **أنشئ مجلد بـ Google Drive تبعك** (مثلاً "Interview Uploads")، وشاركه
+   (Share) مع بريد حساب الخدمة — تلقاه بملف `FIREBASE_SERVICE_ACCOUNT_JSON`
+   نفسه، الحقل `"client_email"` (شكله تقريباً
+   `firebase-adminsdk-xxxxx@interview-3f9f3.iam.gserviceaccount.com`) —
+   وأعطه صلاحية **Editor** (محرر).
+3. **انسخ معرّف المجلد (Folder ID)** من رابط المجلد بالمتصفح (الجزء الأخير
+   من الرابط بعد `folders/`).
+4. أضفه بـ Render كمتغيّر بيئة: **Environment** → **Add Environment Variable**
+   → الاسم `DRIVE_FOLDER_ID`، القيمة معرّف المجلد.
+5. **Manual Deploy** حتى ينزّل السيرفر الاعتماديات الجديدة (`googleapis`,
+   `multer`) ويشتغل.
+
+⚠️ ملاحظة أمان: الملفات المرفوعة (تسجيلات صوت المرشحين، صوت الاستماع، ملف
+PDF) تصير "أي شخص عنده الرابط يقدر يوصلها" — Google Drive ما يدعم تقييد
+الوصول حسب المستخدم بدون تسجيل دخول Google منفصل لكل مرشح. هذا تنازل مقبول
+لتفادي ربط بطاقة بنكية بـ Firebase Blaze؛ لو الأمان أهم أعد النظر لاحقاً
+بتفعيل Blaze والرجوع لـ Firebase Storage.
