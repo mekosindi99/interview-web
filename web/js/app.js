@@ -1091,10 +1091,22 @@ function renderCandidateResultPanel(c) {
           manualScore += v;
         });
         const autoScore = a.autoScore ?? a.score ?? 0;
+        // Fold the manual scores into their sections too, so the result
+        // screen's per-section breakdown includes speaking/writing once graded.
+        const sectionScores = { ...(a.sectionScores || {}) };
+        const manualSections = new Set(manualQs.map((q) => q.section || "reading"));
+        manualSections.forEach((sec) => {
+          sectionScores[sec] = { ...(sectionScores[sec] || { total: 0 }), score: 0 };
+        });
+        manualQs.forEach((q) => {
+          const sec = q.section || "reading";
+          sectionScores[sec].score += newManualScores[q.id];
+        });
         await updateDoc(doc(db, "attempts", c.id), {
           manualScores: newManualScores,
           manualScore,
           score: autoScore + manualScore,
+          sectionScores,
           examStatus: "graded",
           gradedBy: state.user.uid,
           gradedAt: serverTimestamp(),
@@ -2139,15 +2151,22 @@ async function submitExam(activeQs) {
   stopExamTimer();
   let autoScore = 0, totalPoints = 0;
   const manualQuestions = [];
+  // Per-section breakdown (reading/listening/speaking/writing) so the
+  // result screen can show each section's score, not just one grand total.
+  const sectionScores = {};
+  SECTIONS.forEach((s) => { sectionScores[s] = { score: 0, total: 0 }; });
   activeQs.forEach((q) => {
-    totalPoints += q.points || 1;
+    const sec = q.section || "reading";
+    const pts = q.points || 1;
+    totalPoints += pts;
+    sectionScores[sec].total += pts;
     if (q.type === "speaking" || q.type === "writing") {
       manualQuestions.push(q.id);
       return;
     }
     const given = examLocalAnswers[q.id];
     const correct = q.type === "truefalse" ? q.correctAnswer : q.correctIndex;
-    if (given === correct) autoScore += q.points || 1;
+    if (given === correct) { autoScore += pts; sectionScores[sec].score += pts; }
   });
   const hasManual = manualQuestions.length > 0;
   // Recorded so staff can see it — deliberately not fed into the score
@@ -2156,7 +2175,7 @@ async function submitExam(activeQs) {
   await setDoc(doc(db, "attempts", state.profile.id), {
     answers: examLocalAnswers,
     manualAnswers: examManualAnswers,
-    autoScore, manualScore: 0, totalPoints,
+    autoScore, manualScore: 0, totalPoints, sectionScores,
     score: autoScore,
     examStatus: hasManual ? "submitted" : "submitted",
     needsManualGrading: hasManual,
@@ -2199,16 +2218,36 @@ function renderResult() {
     const submittedStr = a.submittedAt?.seconds
       ? new Date(a.submittedAt.seconds * 1000).toLocaleString(localeMap[state.lang])
       : "—";
-    wrap.querySelector("#profile-info").innerHTML += `
+    wrap.querySelector("#exam-meta").innerHTML = `
       <p><b>${L("status")}:</b> ${L(EXAM_STATUS_KEY[a.examStatus] || "submitted")}</p>
       <p><b>${L("submittedAtLabel")}:</b> ${submittedStr}</p>
       ${Number.isFinite(a.durationSec) ? `<p><b>${L("examDurationLabel")}:</b> ${fmtTime(a.durationSec)}</p>` : ""}
     `;
-    wrap.querySelector("#result-summary").innerHTML = `
-      <h2>${L("yourResult")}</h2>
-      <p style="font-size:32px;font-weight:700;">${total} / ${a.totalPoints}</p>
-      ${pendingManual ? `<p class="hint">${L("pendingGrading")}</p>` : ""}
-    `;
+
+    // Four section scores (reading/listening/speaking/writing), each shown
+    // even if pending manual grading (shows "—" for those until graded),
+    // with the combined total below.
+    const sectionScores = a.sectionScores || {};
+    const usedSections = SECTIONS.filter((s) => (sectionScores[s]?.total || 0) > 0);
+    const summaryHtml = [`<h2>${L("yourResult")}</h2>`];
+    if (usedSections.length) {
+      summaryHtml.push(`<div class="section-score-grid">`);
+      usedSections.forEach((s) => {
+        const ss = sectionScores[s];
+        const isManualSection = (s === "speaking" || s === "writing");
+        const stillPending = isManualSection && !graded;
+        summaryHtml.push(`
+          <div class="section-score-box">
+            <div class="section-score-lbl">${L(s)}</div>
+            <div class="section-score-val">${stillPending ? "—" : `${ss.score} / ${ss.total}`}</div>
+          </div>
+        `);
+      });
+      summaryHtml.push(`</div>`);
+    }
+    summaryHtml.push(`<p class="total-score-line"><span>${L("finalScoreLabel")}</span> <b>${total} / ${a.totalPoints}</b></p>`);
+    if (pendingManual) summaryHtml.push(`<p class="hint">${L("pendingGrading")}</p>`);
+    wrap.querySelector("#result-summary").innerHTML = summaryHtml.join("");
 
     const review = wrap.querySelector("#result-review");
     const answers = a.answers || {};
