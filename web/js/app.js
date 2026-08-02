@@ -621,7 +621,7 @@ function renderCandidatesTab() {
       <table class="grid">
         <thead><tr>
           <th>${L("name")}</th><th>${L("phone")}</th><th>${L("password")}</th>
-          <th>${L("status")}</th><th>${L("score")}</th><th></th>
+          <th>${L("status")}</th><th>${L("score")}</th><th>${L("examDurationLabel")}</th><th></th>
         </tr></thead>
         <tbody id="cand-rows"></tbody>
       </table>
@@ -643,6 +643,7 @@ function renderCandidatesTab() {
         <td class="mono">${escapeHtml(c.code || "—")}</td>
         <td>${statusLabel(c)}</td>
         <td>${att ? `${att.score}/${att.totalPoints}` : "—"}</td>
+        <td>${Number.isFinite(att?.durationSec) ? fmtTime(att.durationSec) : "—"}</td>
         <td class="row-actions"></td>
       </tr>
     `);
@@ -1349,6 +1350,7 @@ let examManualAnswers = {};    // speaking/writing answers: {qid: {audioUrl} | {
 let examSectionIndex = 0;
 let examQIndex = 0;
 let examSectionDeadline = 0;   // ms epoch, when the current section auto-advances
+let examStartedAtMs = 0;       // ms epoch, when the candidate clicked "start exam"
 let examTimerInterval = null;
 // Per-question speaking recorder state, not persisted directly (only the
 // uploaded audioUrl is): { [qid]: "idle" | "recording" | "recorded" | "uploading" }
@@ -1410,6 +1412,7 @@ function renderExam() {
       ? Math.min(state.profile.examSectionIndex, sections.length - 1) : 0;
     examQIndex = Number.isInteger(state.profile.examQIndex) ? state.profile.examQIndex : 0;
     examSectionDeadline = state.profile.examSectionDeadline || 0;
+    examStartedAtMs = state.profile.examStartedAtMs || 0;
     state._progressLoadedFor = state.profile.id;
   }
 
@@ -1443,13 +1446,14 @@ function renderExam() {
       if (!examSelectedQuestionIds.length) examSelectedQuestionIds = activeQs.map((q) => q.id);
       const startSections = groupBySections(activeQs.filter((q) => examSelectedQuestionIds.includes(q.id)));
       const deadline = Date.now() + (state.examConfig.sectionMinutes[startSections[0].section] || 20) * 60000;
+      const startedAtMs = Date.now();
       await updateDoc(doc(db, "users", state.profile.id), {
         examStatus: "in_progress", startedAt: serverTimestamp(),
         examSectionIndex: 0, examQIndex: 0, examSectionDeadline: deadline,
-        examSelectedQuestionIds,
+        examSelectedQuestionIds, examStartedAtMs: startedAtMs,
       });
-      examSectionIndex = 0; examQIndex = 0; examSectionDeadline = deadline;
-      setState({ profile: { ...state.profile, examStatus: "in_progress", examSelectedQuestionIds } });
+      examSectionIndex = 0; examQIndex = 0; examSectionDeadline = deadline; examStartedAtMs = startedAtMs;
+      setState({ profile: { ...state.profile, examStatus: "in_progress", examSelectedQuestionIds, examStartedAtMs: startedAtMs } });
     };
     return wrap;
   }
@@ -1670,6 +1674,9 @@ async function submitExam(activeQs) {
     if (given === correct) autoScore += q.points || 1;
   });
   const hasManual = manualQuestions.length > 0;
+  // Recorded so staff can see it — deliberately not fed into the score
+  // itself (see candidate table below), just shown alongside it.
+  const durationSec = examStartedAtMs ? Math.max(0, Math.round((Date.now() - examStartedAtMs) / 1000)) : null;
   await setDoc(doc(db, "attempts", state.profile.id), {
     answers: examLocalAnswers,
     manualAnswers: examManualAnswers,
@@ -1678,6 +1685,7 @@ async function submitExam(activeQs) {
     examStatus: hasManual ? "submitted" : "submitted",
     needsManualGrading: hasManual,
     submittedAt: serverTimestamp(),
+    durationSec,
   });
   // Note: score fields intentionally live only on the attempts doc —
   // candidates can't write "score" on their own users doc (see firestore.rules).
