@@ -783,6 +783,42 @@ function renderExamSettingsTab() {
   manualBtn.onclick = () => { currentMode = "manual"; renderModeBody(); };
   renderModeBody();
 
+  // ---- One-click security cleanup: revoke the public Drive permission
+  // that older uploads (before this fix) were given. Safe to click more
+  // than once. ----
+  if (ADMIN_SERVER_URL) {
+    const secCard = el(`
+      <div class="card">
+        <h3>${L("securityCleanupTitle")}</h3>
+        <p class="hint">${L("securityCleanupHint")}</p>
+        <button type="button" id="revoke-public-btn" class="ghost">${L("securityCleanupBtn")}</button>
+        <div id="revoke-public-msg" style="margin-top:8px"></div>
+      </div>
+    `);
+    const revokeBtn = secCard.querySelector("#revoke-public-btn");
+    const revokeMsg = secCard.querySelector("#revoke-public-msg");
+    revokeBtn.onclick = async () => {
+      revokeBtn.disabled = true;
+      revokeMsg.textContent = L("loading");
+      try {
+        const token = await state.user.getIdToken();
+        const res = await fetch(`${ADMIN_SERVER_URL}/drive/revoke-public`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || res.statusText);
+        revokeMsg.textContent = L("securityCleanupDone", { checked: body.checked, revoked: body.revoked });
+        revokeMsg.className = "notice";
+      } catch (err) {
+        revokeMsg.textContent = `${L("error")}: ${err.message}`;
+        revokeMsg.className = "err";
+      }
+      revokeBtn.disabled = false;
+    };
+    wrap.appendChild(secCard);
+  }
+
   return wrap;
 }
 
