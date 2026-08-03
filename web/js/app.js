@@ -3009,21 +3009,47 @@ async function loadMaterialAndRender(body, root) {
     Object.values(imageUrlCache).forEach((u) => URL.revokeObjectURL(u));
   });
 
-  // Pinch-to-zoom on touch devices.
-  let pinchStartDist = 0, pinchStartZoom = materialZoom;
+  // Pinch-to-zoom on touch devices. During the gesture this only applies a
+  // cheap CSS transform for instant visual feedback — calling renderPage()
+  // (a real PDF rasterize / image relayout) on every touchmove frame was
+  // what made pinch-zoom feel laggy/broken on an actual phone. The real
+  // re-render (at full quality, fit-to-width math redone) only happens once
+  // the fingers lift, via renderPage(materialCurrentPage).
+  let pinchStartDist = 0, pinchStartZoom = materialZoom, pinchLiveZoom = materialZoom;
   const touchDist = (touches) => Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
   canvasWrap.addEventListener("touchstart", (e) => {
-    if (e.touches.length === 2) { pinchStartDist = touchDist(e.touches); pinchStartZoom = materialZoom; }
+    if (e.touches.length === 2) { pinchStartDist = touchDist(e.touches); pinchStartZoom = materialZoom; pinchLiveZoom = materialZoom; }
   }, { passive: true });
   canvasWrap.addEventListener("touchmove", (e) => {
     if (e.touches.length === 2 && pinchStartDist) {
       e.preventDefault();
       const scale = touchDist(e.touches) / pinchStartDist;
-      materialZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, pinchStartZoom * scale));
-      renderPage(materialCurrentPage);
+      pinchLiveZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, pinchStartZoom * scale));
+      stage.style.transform = `scale(${pinchLiveZoom / pinchStartZoom})`;
     }
   }, { passive: false });
-  canvasWrap.addEventListener("touchend", (e) => { if (e.touches.length < 2) pinchStartDist = 0; });
+  canvasWrap.addEventListener("touchend", (e) => {
+    if (e.touches.length < 2 && pinchStartDist) {
+      pinchStartDist = 0;
+      stage.style.transform = "";
+      if (pinchLiveZoom !== materialZoom) {
+        materialZoom = pinchLiveZoom;
+        renderPage(materialCurrentPage);
+      }
+    }
+  });
+  // Standard mobile shortcut: double-tap to jump to a comfortable reading
+  // zoom, or back to fit-to-width if already zoomed in.
+  let lastTapAt = 0;
+  canvasWrap.addEventListener("touchend", (e) => {
+    if (e.touches.length > 0 || e.changedTouches.length !== 1) return;
+    const now = Date.now();
+    if (now - lastTapAt < 300) {
+      materialZoom = materialZoom > MIN_ZOOM ? MIN_ZOOM : 2;
+      renderPage(materialCurrentPage);
+    }
+    lastTapAt = now;
+  });
 
   await renderPage(1);
 
