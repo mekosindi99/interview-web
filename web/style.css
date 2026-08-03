@@ -29,6 +29,21 @@
   color: var(--text);
 }
 
+/* Tinted badges/chips use fixed light pastel backgrounds with dark ink for
+   contrast on purpose (color-coded status), which reads fine on a light
+   page but goes invisible on a dark one — re-tint them for dark mode. */
+:root[data-theme="dark"] .action-chip { background: #2a2e38; color: var(--text); }
+:root[data-theme="dark"] .action-chip:hover { background: #343947; }
+:root[data-theme="dark"] .action-chip.warn { background: #4a3a12; color: #f5c563; }
+:root[data-theme="dark"] .action-chip.warn:hover { background: #5c4818; }
+:root[data-theme="dark"] .action-chip.danger { background: #4a2320; color: #f19188; }
+:root[data-theme="dark"] .action-chip.danger:hover { background: #5c2b27; }
+:root[data-theme="dark"] .status-badge.not-started { background: #2a2e38; color: var(--muted); }
+:root[data-theme="dark"] .status-badge.in-progress { background: #1c2c4a; color: #7fa8ff; }
+:root[data-theme="dark"] .status-badge.submitted { background: #4a3a12; color: #f5c563; }
+:root[data-theme="dark"] .status-badge.graded { background: #143a26; color: #4fd88a; }
+:root[data-theme="dark"] .status-badge.blocked { background: #4a2320; color: #f19188; }
+
 .theme-toggle-btn {
   width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--border);
   background: var(--card); font-size: 16px; display: inline-flex; align-items: center;
