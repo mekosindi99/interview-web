@@ -200,8 +200,8 @@ app.post("/log-login", requireSignedIn, async (req, res) => {
 // users/{uid}, which staff-only Firestore rules already protect.
 function maskPhone(phone) {
   const digits = String(phone || "");
-  if (digits.length <= 4) return digits;
-  return "*".repeat(digits.length - 4) + digits.slice(-4);
+  if (digits.length <= 3) return digits;
+  return "*".repeat(digits.length - 3) + digits.slice(-3);
 }
 
 // Publishes (or removes) one candidate's public leaderboard entry — called

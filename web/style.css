@@ -260,34 +260,25 @@ table.grid .mono { font-family: "Courier New", monospace; letter-spacing: .5px; 
 .leaderboard-total { font-size: 17px; font-weight: 800; color: var(--primary); }
 .leaderboard-table tbody tr:nth-child(even) { background: var(--bg); }
 .leaderboard-row-top { background: color-mix(in srgb, var(--primary) 6%, transparent) !important; }
-/* Using real `border` here (instead of box-shadow) is what made the earlier
-   attempt render as separate boxes per column — border-radius has no
-   effect on borders once a table uses border-collapse (spec behavior, not
-   a bug), so every cell's straight corner showed through. box-shadow isn't
-   subject to that rule and still respects border-radius normally, so the
-   whole row's top/bottom line (identical position in every cell, so they
-   coincide instead of stacking) plus the two rounded, glowing end caps are
-   built entirely out of box-shadow layers instead. */
-.leaderboard-row-me td {
-  background: #fff !important;
-  color: #14161c;
-  box-shadow: inset 0 2px 0 0 var(--me-highlight), inset 0 -2px 0 0 var(--me-highlight);
+/* Per-cell box-shadow (top/bottom lines on every td, plus a side line only
+   on the two end cells) kept needing the side line's offset sign guessed
+   per text direction, and got it wrong more than once. Switched to
+   `outline` on the <tr> itself instead: it's one single paint operation
+   for the whole row perimeter — not per-cell, so there's no direction to
+   get backwards and no seam where two cells' shadows could ever overlap.
+   Modern browsers clip outline to border-radius, so the rounded corners
+   still work the same way. */
+.leaderboard-row-me {
+  outline: 2px solid var(--me-highlight);
+  outline-offset: -2px;
+  border-radius: 12px;
+  animation: leaderboard-row-glow 1.6s ease-in-out infinite;
 }
-/* The table itself is dir="ltr" (see renderLeaderboard) so its columns
-   read left-to-right, which swapped which end cell is physically on which
-   side — first-child (the # column) is now the LEFT end, so it gets the
-   left-side rounding instead of the right. */
-.leaderboard-row-me td:first-child { border-radius: 12px 0 0 12px; animation: leaderboard-glow-cap 1.6s ease-in-out infinite; }
-.leaderboard-row-me td:last-child { border-radius: 0 12px 12px 0; animation: leaderboard-glow-cap 1.6s ease-in-out infinite; }
+.leaderboard-row-me td { background: #fff !important; color: #14161c; }
 .leaderboard-row-me td.leaderboard-name .tag { background: var(--me-highlight); color: #fff; font-weight: 700; }
-/* Both end caps share one keyframe now — the earlier version also drew an
-   inset side line on each end cell's INNER edge (a guessed offset sign
-   that turned out backwards), which is exactly the stray vertical line
-   inside the row that was reported. The rounding + top/bottom lines
-   already read as a closed shape on their own; no inner-edge line needed. */
-@keyframes leaderboard-glow-cap {
-  0%, 100% { box-shadow: inset 0 2px 0 0 var(--me-highlight), inset 0 -2px 0 0 var(--me-highlight), 0 0 0 0 color-mix(in srgb, var(--me-highlight) 45%, transparent); }
-  50% { box-shadow: inset 0 2px 0 0 var(--me-highlight), inset 0 -2px 0 0 var(--me-highlight), 0 0 12px 3px color-mix(in srgb, var(--me-highlight) 55%, transparent); }
+@keyframes leaderboard-row-glow {
+  0%, 100% { filter: drop-shadow(0 0 0 transparent); }
+  50% { filter: drop-shadow(0 0 6px var(--me-highlight)); }
 }
 
 .q-list { display: flex; flex-direction: column; gap: 10px; }
