@@ -273,16 +273,17 @@ table.grid .mono { font-family: "Courier New", monospace; letter-spacing: .5px; 
   color: #14161c;
   box-shadow: inset 0 2px 0 0 var(--me-highlight), inset 0 -2px 0 0 var(--me-highlight);
 }
-.leaderboard-row-me td:first-child { border-radius: 0 12px 12px 0; animation: leaderboard-glow-first 1.6s ease-in-out infinite; }
-.leaderboard-row-me td:last-child { border-radius: 12px 0 0 12px; animation: leaderboard-glow-last 1.6s ease-in-out infinite; }
+.leaderboard-row-me td:first-child { border-radius: 0 12px 12px 0; animation: leaderboard-glow-cap 1.6s ease-in-out infinite; }
+.leaderboard-row-me td:last-child { border-radius: 12px 0 0 12px; animation: leaderboard-glow-cap 1.6s ease-in-out infinite; }
 .leaderboard-row-me td.leaderboard-name .tag { background: var(--me-highlight); color: #fff; font-weight: 700; }
-@keyframes leaderboard-glow-first {
-  0%, 100% { box-shadow: inset 0 2px 0 0 var(--me-highlight), inset 0 -2px 0 0 var(--me-highlight), inset -2px 0 0 0 var(--me-highlight), 0 0 0 0 color-mix(in srgb, var(--me-highlight) 45%, transparent); }
-  50% { box-shadow: inset 0 2px 0 0 var(--me-highlight), inset 0 -2px 0 0 var(--me-highlight), inset -2px 0 0 0 var(--me-highlight), 0 0 12px 3px color-mix(in srgb, var(--me-highlight) 55%, transparent); }
-}
-@keyframes leaderboard-glow-last {
-  0%, 100% { box-shadow: inset 0 2px 0 0 var(--me-highlight), inset 0 -2px 0 0 var(--me-highlight), inset 2px 0 0 0 var(--me-highlight), 0 0 0 0 color-mix(in srgb, var(--me-highlight) 45%, transparent); }
-  50% { box-shadow: inset 0 2px 0 0 var(--me-highlight), inset 0 -2px 0 0 var(--me-highlight), inset 2px 0 0 0 var(--me-highlight), 0 0 12px 3px color-mix(in srgb, var(--me-highlight) 55%, transparent); }
+/* Both end caps share one keyframe now — the earlier version also drew an
+   inset side line on each end cell's INNER edge (a guessed offset sign
+   that turned out backwards), which is exactly the stray vertical line
+   inside the row that was reported. The rounding + top/bottom lines
+   already read as a closed shape on their own; no inner-edge line needed. */
+@keyframes leaderboard-glow-cap {
+  0%, 100% { box-shadow: inset 0 2px 0 0 var(--me-highlight), inset 0 -2px 0 0 var(--me-highlight), 0 0 0 0 color-mix(in srgb, var(--me-highlight) 45%, transparent); }
+  50% { box-shadow: inset 0 2px 0 0 var(--me-highlight), inset 0 -2px 0 0 var(--me-highlight), 0 0 12px 3px color-mix(in srgb, var(--me-highlight) 55%, transparent); }
 }
 
 .q-list { display: flex; flex-direction: column; gap: 10px; }
