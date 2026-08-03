@@ -43,6 +43,19 @@
 :root[data-theme="dark"] .status-badge.submitted { background: #4a3a12; color: #f5c563; }
 :root[data-theme="dark"] .status-badge.graded { background: #143a26; color: #4fd88a; }
 :root[data-theme="dark"] .status-badge.blocked { background: #4a2320; color: #f19188; }
+:root[data-theme="dark"] button { background: #2a2e38; }
+:root[data-theme="dark"] button.ghost:hover { background: #343947; }
+:root[data-theme="dark"] button.link.warn { color: #f5c563; }
+:root[data-theme="dark"] .notice { background: #4a3a12; border-color: #7a5f1f; color: var(--text); }
+:root[data-theme="dark"] table.grid th { background: #23262f; }
+:root[data-theme="dark"] .tag { background: #2a2e38; }
+:root[data-theme="dark"] .tag.warn { background: #4a2320; color: #f19188; }
+:root[data-theme="dark"] .option.picked { background: #3a1f2b; }
+:root[data-theme="dark"] .section-tag { background: #143a26; color: #4fd88a; }
+:root[data-theme="dark"] .passage,
+:root[data-theme="dark"] .writing-answer-view { background: #23262f; }
+:root[data-theme="dark"] .page-nav-btn { background: rgba(30,33,42,.85); }
+:root[data-theme="dark"] .page-nav-btn:hover { background: #1e212a; }
 
 .theme-toggle-btn {
   width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--border);
