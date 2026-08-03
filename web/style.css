@@ -76,7 +76,11 @@ body {
 #app { max-width: 960px; margin: 0 auto; padding: 16px; overflow-x: hidden; }
 img, canvas, svg, video, audio { max-width: 100%; }
 
-.lang-row { display: flex; align-items: center; gap: 8px; justify-content: flex-end; margin-bottom: 12px; }
+.lang-row {
+  display: flex; align-items: center; gap: 8px; justify-content: flex-end; flex-wrap: wrap; row-gap: 8px;
+  background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px;
+  margin-bottom: 12px;
+}
 .logout-flag-btn { margin-inline-end: auto; }
 .topbar-timer-only { justify-content: center; }
 .lang-flag-btn {
