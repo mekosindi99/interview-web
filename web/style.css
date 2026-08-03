@@ -11,6 +11,31 @@
   font-family: "Cairo", "Segoe UI", Tahoma, "Noto Sans Arabic", "Noto Naskh Arabic", sans-serif;
 }
 
+:root[data-theme="dark"] {
+  --bg: #14161c;
+  --card: #1e212a;
+  --text: #e7e9ee;
+  --muted: #9198a6;
+  --primary: #d8477a;
+  --primary-dark: #b8305c;
+  --ok: #2fbf6c;
+  --bad: #e0574a;
+  --border: #2c303b;
+}
+:root[data-theme="dark"] input,
+:root[data-theme="dark"] select,
+:root[data-theme="dark"] textarea {
+  background: var(--card);
+  color: var(--text);
+}
+
+.theme-toggle-btn {
+  width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--border);
+  background: var(--card); font-size: 16px; display: inline-flex; align-items: center;
+  justify-content: center; cursor: pointer; padding: 0;
+}
+.theme-toggle-btn:hover { background: var(--bg); }
+
 * { box-sizing: border-box; }
 
 body {

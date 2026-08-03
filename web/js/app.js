@@ -136,6 +136,7 @@ let state = {
   // English removed site-wide — Arabic/Kurdish only. Guards against a
   // browser that still has "en" saved from before this change.
   lang: LANGS.includes(localStorage.getItem("lang")) ? localStorage.getItem("lang") : "ar",
+  theme: localStorage.getItem("theme") === "dark" ? "dark" : "light",
   user: null,       // firebase auth user
   profile: null,     // users/{uid} doc
   route: "login",    // login | admin | exam | result | admin-setup
@@ -150,6 +151,7 @@ function L(key, vars) { return tr(state.lang, key, vars); }
 
 function setState(patch) {
   state = { ...state, ...patch };
+  document.documentElement.dataset.theme = state.theme;
   render();
 }
 
@@ -158,6 +160,7 @@ const root = document.getElementById("app");
 
 document.documentElement.lang = state.lang;
 document.documentElement.dir = DIR[state.lang];
+document.documentElement.dataset.theme = state.theme;
 
 onAuthStateChanged(auth, async (user) => {
   stopStaffWatchers();
@@ -459,6 +462,17 @@ function langSwitcher() {
     logoutBtn.onclick = () => signOut(auth);
     wrap.appendChild(logoutBtn);
   }
+  const themeBtn = el(`
+    <button type="button" class="theme-toggle-btn" aria-label="${L("toggleTheme")}" title="${L("toggleTheme")}">
+      ${state.theme === "dark" ? "☀️" : "🌙"}
+    </button>
+  `);
+  themeBtn.onclick = () => {
+    const next = state.theme === "dark" ? "light" : "dark";
+    localStorage.setItem("theme", next);
+    setState({ theme: next });
+  };
+  wrap.appendChild(themeBtn);
   LANGS.forEach((l) => {
     const b = el(`
       <button type="button" class="lang-flag-btn ${l === state.lang ? "active" : ""}" aria-label="${LANG_NAME[l]}" title="${LANG_NAME[l]}">
