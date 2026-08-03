@@ -1439,23 +1439,42 @@ function renderMaterialAdminTab() {
   const hasImages = Array.isArray(m.images) && m.images.length > 0;
   const mode = m.mode === "images" ? "images" : "pdf";
 
+  // Both formats (PDF / image pages), each with its own upload, status,
+  // delete, and "make this the one candidates see" control, live together
+  // in one matching pair of cards — instead of scattered separate
+  // upload/status/mode sections — so everything about a format is in one
+  // place, per the admin's request.
+  const grid = el(`<div class="cand-card-grid"></div>`);
+  wrap.appendChild(el(`<p class="hint">${L("materialActiveModeHint")}</p>`));
+
+  async function setActiveMode(next) {
+    await updateDoc(doc(db, "settings", "material"), { mode: next });
+    state.material = { ...state.material, mode: next };
+    setState({});
+  }
+
+  // ---- PDF format card ----
+  const pdfCard = el(`<div class="cand-card"></div>`);
+  pdfCard.appendChild(el(`
+    <div class="cand-card-head">
+      <div class="cand-card-name">📄 ${L("materialModePdf")}</div>
+      ${hasPdf && mode === "pdf" ? `<span class="status-badge graded">${L("materialActiveBadge")}</span>` : ""}
+    </div>
+  `));
+  pdfCard.appendChild(hasPdf ? renderFileInfoCard(m, state.lang) : el(`<p class="hint">${L("noMaterial")}</p>`));
   if (isAdmin) {
-    // ---- PDF upload ----
-    const form = el(`
-      <form id="material-form" class="card">
-        <h3>${L("uploadMaterial")}</h3>
-        <label>${L("chooseFile")}<input type="file" name="file" accept="application/pdf" required /></label>
-        <div class="err" id="material-err"></div>
-        <button type="submit" class="primary">${L("save")}</button>
+    const pdfForm = el(`
+      <form class="row-actions" style="align-items:center">
+        <input type="file" name="file" accept="application/pdf" required style="flex:1;min-width:140px" />
+        <button type="submit" class="ghost">${L("save")}</button>
       </form>
     `);
-    form.onsubmit = async (e) => {
+    const pdfErr = el(`<div class="err"></div>`);
+    pdfForm.onsubmit = async (e) => {
       e.preventDefault();
-      const f = new FormData(e.target);
-      const file = f.get("file");
-      const errBox = form.querySelector("#material-err");
-      errBox.textContent = L("uploadingFile");
-      errBox.classList.remove("notice");
+      const file = new FormData(e.target).get("file");
+      pdfErr.textContent = L("uploadingFile");
+      pdfErr.classList.remove("notice");
       try {
         const fileSize = file.size;
         const { fileId, fileName } = await uploadViaServer("/uploads/material", file);
@@ -1465,29 +1484,71 @@ function renderMaterialAdminTab() {
         state.material = { ...state.material, fileId, fileName, fileSize, updatedAtMs: Date.now(), mode: patch.mode || mode };
         setState({});
       } catch (err) {
-        errBox.textContent = err.message;
+        pdfErr.textContent = err.message;
       }
     };
-    wrap.appendChild(form);
+    pdfCard.appendChild(pdfForm);
+    pdfCard.appendChild(pdfErr);
 
-    // ---- Images upload (alternative to the PDF — sturdier when a PDF's
-    // embedded font doesn't render correctly, since an image can't garble) ----
+    const pdfActions = el(`<div class="cand-card-actions"></div>`);
+    if (hasPdf && mode !== "pdf") {
+      const setActiveBtn = makeChip("✅", L("setActiveFormat"));
+      setActiveBtn.onclick = () => setActiveMode("pdf");
+      pdfActions.appendChild(setActiveBtn);
+    }
+    if (hasPdf) {
+      const delBtn = makeChip("🗑", L("deleteMaterial"), "danger");
+      delBtn.onclick = async () => {
+        if (!confirm(L("deleteMaterialConfirm"))) return;
+        delBtn.disabled = true;
+        try {
+          const token = await state.user.getIdToken();
+          const res = await fetch(`${ADMIN_SERVER_URL}/material/${m.fileId}`, {
+            method: "DELETE", headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+          const patch = { fileId: deleteField(), fileName: deleteField(), fileSize: deleteField() };
+          if (mode === "pdf" && hasImages) patch.mode = "images";
+          await updateDoc(doc(db, "settings", "material"), patch);
+          state.material = { ...state.material, fileId: null, fileName: null, fileSize: null, mode: patch.mode || state.material.mode };
+          setState({});
+        } catch (err) {
+          alert(`${L("error")}: ${err.message}`);
+          delBtn.disabled = false;
+        }
+      };
+      pdfActions.appendChild(delBtn);
+    }
+    if (pdfActions.children.length) pdfCard.appendChild(pdfActions);
+  }
+  grid.appendChild(pdfCard);
+
+  // ---- Image-pages format card (alternative to the PDF — sturdier when a
+  // PDF's embedded font doesn't render correctly, since an image can't
+  // garble) ----
+  const imgCard = el(`<div class="cand-card"></div>`);
+  imgCard.appendChild(el(`
+    <div class="cand-card-head">
+      <div class="cand-card-name">🖼️ ${L("materialModeImages")}</div>
+      ${hasImages && mode === "images" ? `<span class="status-badge graded">${L("materialActiveBadge")}</span>` : ""}
+    </div>
+  `));
+  imgCard.appendChild(el(`<p class="hint">${hasImages ? L("materialImagesCount", { n: m.images.length }) : L("noMaterialImages")}</p>`));
+  if (isAdmin) {
     const imgForm = el(`
-      <form id="material-images-form" class="card">
-        <h3>${L("uploadMaterialImages")}</h3>
-        <p class="hint">${L("uploadMaterialImagesHint")}</p>
-        <label>${L("chooseFiles")}<input type="file" name="files" accept="image/*" multiple required /></label>
-        <div class="err" id="material-images-err"></div>
-        <button type="submit" class="primary">${L("save")}</button>
+      <form class="row-actions" style="align-items:center">
+        <input type="file" name="files" accept="image/*" multiple required style="flex:1;min-width:140px" title="${L("chooseFiles")}" />
+        <button type="submit" class="ghost">${L("save")}</button>
       </form>
     `);
+    const imgErr = el(`<div class="err"></div>`);
+    imgForm.appendChild(el(`<p class="hint">${L("uploadMaterialImagesHint")}</p>`));
     imgForm.onsubmit = async (e) => {
       e.preventDefault();
       const input = imgForm.querySelector("[name=files]");
       const files = [...input.files].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-      const errBox = imgForm.querySelector("#material-images-err");
-      errBox.textContent = L("uploadingFile");
-      errBox.classList.remove("notice");
+      imgErr.textContent = L("uploadingFile");
+      imgErr.classList.remove("notice");
       try {
         const fd = new FormData();
         files.forEach((file) => fd.append("files", file));
@@ -1503,98 +1564,47 @@ function renderMaterialAdminTab() {
         state.material = { ...state.material, images: body.images, imagesUpdatedAtMs: Date.now(), mode: patch.mode || mode };
         setState({});
       } catch (err) {
-        errBox.textContent = err.message;
+        imgErr.textContent = err.message;
       }
     };
-    wrap.appendChild(imgForm);
-  }
+    imgCard.appendChild(imgForm);
+    imgCard.appendChild(imgErr);
 
-  // ---- PDF status ----
-  const pdfRow = el(`<div class="row-actions" style="align-items:center"></div>`);
-  pdfRow.appendChild(hasPdf ? renderFileInfoCard(m, state.lang) : el(`<p>${L("noMaterial")}</p>`));
-  if (isAdmin && hasPdf) {
-    const delBtn = el(`<button class="link danger">${L("deleteMaterial")}</button>`);
-    delBtn.onclick = async () => {
-      if (!confirm(L("deleteMaterialConfirm"))) return;
-      delBtn.disabled = true;
-      try {
-        const token = await state.user.getIdToken();
-        const res = await fetch(`${ADMIN_SERVER_URL}/material/${m.fileId}`, {
-          method: "DELETE", headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
-        const patch = { fileId: deleteField(), fileName: deleteField(), fileSize: deleteField() };
-        if (mode === "pdf" && hasImages) patch.mode = "images";
-        await updateDoc(doc(db, "settings", "material"), patch);
-        state.material = { ...state.material, fileId: null, fileName: null, fileSize: null, mode: patch.mode || state.material.mode };
-        setState({});
-      } catch (err) {
-        alert(`${L("error")}: ${err.message}`);
-        delBtn.disabled = false;
-      }
-    };
-    pdfRow.appendChild(delBtn);
+    const imgActions = el(`<div class="cand-card-actions"></div>`);
+    if (hasImages && mode !== "images") {
+      const setActiveBtn = makeChip("✅", L("setActiveFormat"));
+      setActiveBtn.onclick = () => setActiveMode("images");
+      imgActions.appendChild(setActiveBtn);
+    }
+    if (hasImages) {
+      const delImgsBtn = makeChip("🗑", L("deleteMaterialImages"), "danger");
+      delImgsBtn.onclick = async () => {
+        if (!confirm(L("deleteMaterialImagesConfirm"))) return;
+        delImgsBtn.disabled = true;
+        try {
+          const token = await state.user.getIdToken();
+          await fetch(`${ADMIN_SERVER_URL}/material-images`, {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ fileIds: m.images.map((im) => im.fileId) }),
+          });
+          const patch = { images: deleteField() };
+          if (mode === "images" && hasPdf) patch.mode = "pdf";
+          await updateDoc(doc(db, "settings", "material"), patch);
+          state.material = { ...state.material, images: null, mode: patch.mode || state.material.mode };
+          setState({});
+        } catch (err) {
+          alert(`${L("error")}: ${err.message}`);
+          delImgsBtn.disabled = false;
+        }
+      };
+      imgActions.appendChild(delImgsBtn);
+    }
+    if (imgActions.children.length) imgCard.appendChild(imgActions);
   }
-  wrap.appendChild(pdfRow);
+  grid.appendChild(imgCard);
 
-  // ---- Images status ----
-  const imagesRow = el(`<div class="row-actions" style="align-items:center"></div>`);
-  imagesRow.appendChild(el(`<p>${hasImages ? L("materialImagesCount", { n: m.images.length }) : L("noMaterialImages")}</p>`));
-  if (isAdmin && hasImages) {
-    const delImgsBtn = el(`<button class="link danger">${L("deleteMaterialImages")}</button>`);
-    delImgsBtn.onclick = async () => {
-      if (!confirm(L("deleteMaterialImagesConfirm"))) return;
-      delImgsBtn.disabled = true;
-      try {
-        const token = await state.user.getIdToken();
-        await fetch(`${ADMIN_SERVER_URL}/material-images`, {
-          method: "DELETE",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ fileIds: m.images.map((im) => im.fileId) }),
-        });
-        const patch = { images: deleteField() };
-        if (mode === "images" && hasPdf) patch.mode = "pdf";
-        await updateDoc(doc(db, "settings", "material"), patch);
-        state.material = { ...state.material, images: null, mode: patch.mode || state.material.mode };
-        setState({});
-      } catch (err) {
-        alert(`${L("error")}: ${err.message}`);
-        delImgsBtn.disabled = false;
-      }
-    };
-    imagesRow.appendChild(delImgsBtn);
-  }
-  wrap.appendChild(imagesRow);
-
-  // ---- Active mode toggle (which one candidates actually see) ----
-  // Always visible once at least one format exists — picking a format with
-  // nothing uploaded yet is how the admin can deliberately show "no
-  // material" for that format (its button is just disabled instead, so
-  // that specific no-op isn't available, but the other format stays a
-  // one-click switch away at any time).
-  if (isAdmin && (hasPdf || hasImages)) {
-    const modeCard = el(`
-      <div class="card">
-        <h3>${L("materialActiveModeLabel")}</h3>
-        <p class="hint">${L("materialActiveModeHint")}</p>
-        <div class="row-actions">
-          <button type="button" id="mode-pdf-btn" class="${mode === "pdf" ? "primary" : "ghost"}" ${hasPdf ? "" : "disabled"}>${L("materialModePdf")}</button>
-          <button type="button" id="mode-images-btn" class="${mode === "images" ? "primary" : "ghost"}" ${hasImages ? "" : "disabled"}>${L("materialModeImages")}</button>
-        </div>
-      </div>
-    `);
-    modeCard.querySelector("#mode-pdf-btn").onclick = async () => {
-      await updateDoc(doc(db, "settings", "material"), { mode: "pdf" });
-      state.material = { ...state.material, mode: "pdf" };
-      setState({});
-    };
-    modeCard.querySelector("#mode-images-btn").onclick = async () => {
-      await updateDoc(doc(db, "settings", "material"), { mode: "images" });
-      state.material = { ...state.material, mode: "images" };
-      setState({});
-    };
-    wrap.appendChild(modeCard);
-  }
+  wrap.appendChild(grid);
 
   const statsHost = el(`
     <div>
