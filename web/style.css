@@ -278,10 +278,15 @@ table.grid .mono { font-family: "Courier New", monospace; letter-spacing: .5px; 
      (top/bottom above, and the two outer-edge borders below) should show. */
   border-inline-start: none;
   border-inline-end: none;
-  animation: leaderboard-glow 1.6s ease-in-out infinite;
 }
-.leaderboard-row-me td:first-child { border-radius: 0 12px 12px 0; border-inline-end: 2px solid var(--me-highlight); }
-.leaderboard-row-me td:last-child { border-radius: 12px 0 0 12px; border-inline-start: 2px solid var(--me-highlight); }
+/* The glow animation used to run on every <td> independently — at each
+   internal seam between two cells, both cells' blurred shadows overlapped
+   and added up, so it visibly read as two glows layered on top of each
+   other instead of one. Now it only plays on the row's two end caps (where
+   the rounding already is); the blur bleeds inward from each end, and the
+   plain static border above is what marks the row the rest of the way. */
+.leaderboard-row-me td:first-child { border-radius: 0 12px 12px 0; border-inline-end: 2px solid var(--me-highlight); animation: leaderboard-glow 1.6s ease-in-out infinite; }
+.leaderboard-row-me td:last-child { border-radius: 12px 0 0 12px; border-inline-start: 2px solid var(--me-highlight); animation: leaderboard-glow 1.6s ease-in-out infinite; }
 .leaderboard-row-me td.leaderboard-name .tag { background: var(--me-highlight); color: #fff; font-weight: 700; }
 @keyframes leaderboard-glow {
   0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--me-highlight) 45%, transparent); }
