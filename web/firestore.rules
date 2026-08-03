@@ -114,5 +114,17 @@ service cloud.firestore {
     match /users/{uid}/loginDevices/{deviceId} {
       allow read: if isSignedIn() && (request.auth.uid == uid || isStaff());
     }
+
+    // Public results board — every signed-in candidate can see every other
+    // candidate's name + score, for the "everyone can verify the results"
+    // request this was built for. Client-write is deliberately disabled:
+    // this is only ever written by the admin server's /leaderboard/sync/:uid
+    // (server/index.js) via the Admin SDK right after grading, reading the
+    // real score from attempts/{uid} itself — a candidate can't write
+    // themselves a fake entry here even indirectly.
+    match /leaderboard/{uid} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
   }
 }

@@ -168,6 +168,57 @@ app.post("/log-login", requireSignedIn, async (req, res) => {
   }
 });
 
+// Masks a phone number to only its last 4 digits for the public
+// leaderboard — "07501234567" -> "*******4567". Done here, server-side,
+// rather than just in the UI: the leaderboard doc is what a candidate's
+// Firestore client can actually read directly, so if the full number were
+// stored in it, hiding it in the UI wouldn't really hide it (dev tools/the
+// SDK console would still see the raw field). Only the masked string is
+// ever written to leaderboard/{uid} — the real number stays only on
+// users/{uid}, which staff-only Firestore rules already protect.
+function maskPhone(phone) {
+  const digits = String(phone || "");
+  if (digits.length <= 4) return digits;
+  return "*".repeat(digits.length - 4) + digits.slice(-4);
+}
+
+// Publishes (or removes) one candidate's public leaderboard entry —
+// admin-only, called right after the admin saves manual grading. Written
+// via the Admin SDK (bypasses Firestore rules) specifically so the
+// leaderboard/{uid} collection can stay client-write-disabled in
+// firestore.rules — a candidate could otherwise just write themselves a
+// fake #1 score directly. The score/section breakdown is read fresh from
+// attempts/{uid} here, never trusted from the request body, so there's
+// nothing for the client to lie about even indirectly.
+app.post("/leaderboard/sync/:uid", requireAdmin, async (req, res) => {
+  try {
+    const { uid } = req.params;
+    const [userSnap, attemptSnap] = await Promise.all([
+      db.collection("users").doc(uid).get(),
+      db.collection("attempts").doc(uid).get(),
+    ]);
+    if (!userSnap.exists || !attemptSnap.exists) return res.status(404).json({ error: "not found" });
+    const attempt = attemptSnap.data();
+    if (attempt.examStatus !== "graded") {
+      // Not (or no longer) graded — make sure any previous entry is gone
+      // instead of leaving a stale score on the board.
+      await db.collection("leaderboard").doc(uid).delete().catch(() => {});
+      return res.json({ ok: true, published: false });
+    }
+    await db.collection("leaderboard").doc(uid).set({
+      name: userSnap.data().name || "",
+      phoneMasked: maskPhone(userSnap.data().phone),
+      sectionScores: attempt.sectionScores || {},
+      score: attempt.score ?? 0,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    res.json({ ok: true, published: true });
+  } catch (err) {
+    console.error("leaderboard sync failed", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Candidate's own speaking-answer recording — flat filename
 // speaking__{verifiedUid}__{qid}.webm, made link-readable, URL returned for
 // the client to store on the attempt doc.

@@ -467,6 +467,8 @@ function render() {
   if (state.profile?.role === "candidate") {
     if (state.route === "material") {
       root.appendChild(renderMaterialViewer());
+    } else if (state.route === "leaderboard") {
+      root.appendChild(renderLeaderboard());
     } else if (state.route === "result" || ["submitted", "graded"].includes(state.profile.examStatus)) {
       root.appendChild(renderResult());
     } else {
@@ -1367,6 +1369,17 @@ function renderCandidateResultPanel(c) {
           gradedBy: state.user.uid,
           gradedAt: serverTimestamp(),
         });
+        // Publishes the public leaderboard entry (server-side, reads the
+        // score back from Firestore itself — see /leaderboard/sync in
+        // server/index.js). Best-effort: the grading itself already saved
+        // above regardless of whether this succeeds.
+        if (ADMIN_SERVER_URL) {
+          state.user.getIdToken().then((token) =>
+            fetch(`${ADMIN_SERVER_URL}/leaderboard/sync/${c.id}`, {
+              method: "POST", headers: { Authorization: `Bearer ${token}` },
+            })
+          ).catch(() => {});
+        }
         gradeMsg.textContent = L("gradingSaved");
         gradeMsg.classList.remove("err");
         gradeMsg.classList.add("notice");
@@ -2592,12 +2605,74 @@ async function submitExam(activeQs) {
   setState({ profile: { ...state.profile, examStatus: "submitted" } });
 }
 
+// Public results board: every candidate can see every other graded
+// candidate's name, masked phone, per-section scores, and total — reads
+// straight from leaderboard/{uid}, which only the admin server can ever
+// write (see server/index.js's /leaderboard/sync), so nothing here can be
+// spoofed by a candidate's own client.
+function renderLeaderboard() {
+  const wrap = el(`
+    <div class="shell">
+      <div class="row-actions" style="justify-content:center;margin-bottom:4px">
+        <button id="leaderboard-back-btn" class="ghost">${L("back")}</button>
+      </div>
+      <div class="card">
+        <h2>${L("leaderboardTitle")}</h2>
+        <p class="hint">${L("leaderboardHint")}</p>
+        <div id="leaderboard-body">${L("loading")}</div>
+      </div>
+    </div>
+  `);
+  wrap.querySelector("#leaderboard-back-btn").onclick = () => setState({ route: "result" });
+
+  const body = wrap.querySelector("#leaderboard-body");
+  getDocs(query(collection(db, "leaderboard"), orderBy("score", "desc"))).then((snap) => {
+    body.innerHTML = "";
+    if (snap.empty) { body.innerHTML = `<p>${L("leaderboardEmpty")}</p>`; return; }
+    const usedSections = new Set();
+    snap.forEach((d) => Object.keys(d.data().sectionScores || {}).forEach((s) => usedSections.add(s)));
+    const sectionCols = SECTIONS.filter((s) => usedSections.has(s));
+    const tableWrap = el(`
+      <div class="table-scroll">
+        <table class="grid">
+          <thead><tr>
+            <th>#</th><th>${L("name")}</th><th>${L("phone")}</th>
+            ${sectionCols.map((s) => `<th>${L(s)}</th>`).join("")}
+            <th>${L("total")}</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    `);
+    const tbody = tableWrap.querySelector("tbody");
+    let rank = 0;
+    snap.forEach((d) => {
+      rank++;
+      const row = d.data();
+      const isMe = d.id === state.profile.id;
+      const ss = row.sectionScores || {};
+      tbody.appendChild(el(`
+        <tr ${isMe ? 'style="font-weight:800"' : ""}>
+          <td>${rank}</td>
+          <td>${escapeHtml(row.name || "")}</td>
+          <td class="mono">${escapeHtml(row.phoneMasked || "")}</td>
+          ${sectionCols.map((s) => `<td>${ss[s] ? `${ss[s].score}/${ss[s].total}` : "—"}</td>`).join("")}
+          <td><b>${row.score ?? 0}</b></td>
+        </tr>
+      `));
+    });
+    body.appendChild(tableWrap);
+  });
+  return wrap;
+}
+
 function renderResult() {
   const p = state.profile;
   const wrap = el(`
     <div class="shell">
       <div class="row-actions" style="justify-content:center;margin-bottom:4px">
         <button id="material-btn-result" class="ghost">${L("readMaterial")}</button>
+        <button id="leaderboard-btn" class="ghost">${L("leaderboardBtn")}</button>
       </div>
       <div id="cred-card-host"></div>
       <div class="card center-card" id="exam-meta"></div>
@@ -2609,6 +2684,7 @@ function renderResult() {
     </div>
   `);
   wrap.querySelector("#material-btn-result").onclick = () => setState({ route: "material" });
+  wrap.querySelector("#leaderboard-btn").onclick = () => setState({ route: "leaderboard" });
   // -u-nu-latn: keep Arabic date/time formatting but force Western digits
   // (0-9) instead of Eastern Arabic-Indic numerals (٠-٩) everywhere in the app.
   const localeMap = { ar: "ar-IQ-u-nu-latn", ku: "en-GB", en: "en-US" };
