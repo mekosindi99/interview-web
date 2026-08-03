@@ -683,3 +683,19 @@ app.delete("/by-phone/:phone", requireAdmin, async (req, res) => {
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`interview-admin-server listening on ${port}`));
+
+// Render's free tier spins the whole instance down after ~15 minutes with
+// no inbound traffic, and the next real request then eats a ~50s cold
+// start — exactly the kind of "slow" a candidate can't tell apart from
+// Drive itself being slow. Not a perfect fix (a self-ping only counts as
+// activity while the process is already running — it can't wake something
+// already asleep, and Render may still recycle it for unrelated reasons),
+// but free and meaningfully reduces how often that 50s hit happens.
+// RENDER_EXTERNAL_URL is set automatically by Render on every web service;
+// this is a no-op with nothing to ping when run anywhere else (e.g. local dev).
+const selfUrl = process.env.RENDER_EXTERNAL_URL;
+if (selfUrl) {
+  setInterval(() => {
+    fetch(selfUrl).catch(() => {});
+  }, 10 * 60 * 1000);
+}
