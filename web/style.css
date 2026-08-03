@@ -363,7 +363,13 @@ table.grid .mono { font-family: "Courier New", monospace; letter-spacing: .5px; 
 /* display:flex + margin:auto on the child (not text-align/justify-content:
    center) — centering an overflowing scroll container any other way clips
    the far edge once the zoomed page is wider/taller than the viewport. */
-.pdf-canvas-wrap { position: absolute; inset: 0; overflow: auto; touch-action: none; transition: filter .2s; display: flex; padding: 8px; }
+/* touch-action: pan-x pan-y (not "none") — "none" blocked ALL native touch
+   gestures, including plain one-finger panning once a page was zoomed in
+   past the viewport, so there was no way to scroll to the sides. This only
+   suppresses the browser's own pinch-zoom (which would fight the custom
+   pinch handler below) while still letting the native scroll container pan
+   freely in both directions. */
+.pdf-canvas-wrap { position: absolute; inset: 0; overflow: auto; touch-action: pan-x pan-y; transition: filter .2s; display: flex; padding: 8px; }
 /* The page (canvas or img) and the watermark overlay share this box, so the
    overlay always covers exactly the rendered page at any zoom level. */
 /* overflow:hidden clips the watermark overlay, which is rotated and scaled
