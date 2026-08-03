@@ -259,23 +259,23 @@ app.post("/uploads/material-images", requireAdmin, upload.array("files", 200), a
   }
 });
 
-// Best-effort permanent delete, falling back to trashing the file instead
-// of silently giving up — a straight files.delete can fail for reasons
-// that don't mean "this file is fine to leave behind" (e.g. propagation
-// delay right after a permissions change), and previously any failure here
-// was swallowed with .catch(() => {}), so the file quietly stayed in Drive
-// forever with nothing in the app pointing at it anymore.
+// Every delete in this file now only ever TRASHES (never a hard
+// drive.files.delete) — trashed files stay recoverable in the OAuth
+// account's Drive trash for ~30 days before Google auto-purges them, giving
+// a real window to undo a mistake (like a purge tool wrongly targeting a
+// file that was still in use). This deliberately trades a little unused
+// storage for never having an admin-facing delete be instantly
+// unrecoverable. Previously this attempted a hard delete first and any
+// failure was swallowed with .catch(() => {}), which is how a past bug left
+// files behind with no error AND no way to find them again — trashing
+// can't have that failure mode, since a file already in the trash target
+// state is not an error.
 async function deleteOrTrashFile(fileId) {
   try {
-    await drive.files.delete({ fileId });
-    return "deleted";
+    await drive.files.update({ fileId, requestBody: { trashed: true } });
+    return "trashed";
   } catch (err) {
-    try {
-      await drive.files.update({ fileId, requestBody: { trashed: true } });
-      return "trashed";
-    } catch (err2) {
-      return "failed";
-    }
+    return "failed";
   }
 }
 
@@ -476,44 +476,71 @@ app.delete("/material/:fileId", requireAdmin, async (req, res) => {
   }
 });
 
-// One-time cleanup: sweeps every material-page/material file sitting in the
-// Drive folder and removes anything no longer referenced by the live
-// settings/material doc in Firestore. Needed because earlier deletes
-// silently swallowed failures (see deleteOrTrashFile above) — any image
-// that failed to delete back then is now an orphan with no fileId left
-// anywhere in the app to target individually, so the only way to find it
-// again is to compare the whole folder against what's actually still in use.
+// Finds every material-page/material file in the Drive folder that the live
+// settings/material doc in Firestore no longer references. Two-step by
+// design after an earlier version of this deleted a file that turned out to
+// still be in use: without ?apply=true this only LISTS candidates (nothing
+// touched), so the admin can see exactly what's about to be removed before
+// committing to it. A grace period also skips anything created in the last
+// hour, in case Firestore's write and this listing land close enough
+// together to disagree about what's "current".
+async function findOrphanMaterialFiles() {
+  const materialSnap = await db.collection("settings").doc("material").get();
+  const material = materialSnap.exists ? materialSnap.data() : {};
+  const keepIds = new Set([
+    material.fileId,
+    ...((material.images || []).map((im) => im.fileId)),
+  ].filter(Boolean));
+
+  const graceMs = 60 * 60 * 1000;
+  const orphans = [];
+  let pageToken;
+  do {
+    const list = await drive.files.list({
+      q: `'${DRIVE_FOLDER_ID}' in parents and trashed = false`,
+      fields: "nextPageToken, files(id, name, createdTime)",
+      pageToken,
+    });
+    for (const file of list.data.files || []) {
+      if (!/^(material__|material-page__)/.test(file.name)) continue;
+      if (keepIds.has(file.id)) continue;
+      if (file.createdTime && Date.now() - new Date(file.createdTime).getTime() < graceMs) continue;
+      orphans.push({ id: file.id, name: file.name });
+    }
+    pageToken = list.data.nextPageToken;
+  } while (pageToken);
+  return orphans;
+}
+
 app.post("/drive/purge-orphans", requireAdmin, async (req, res) => {
   try {
-    const materialSnap = await db.collection("settings").doc("material").get();
-    const material = materialSnap.exists ? materialSnap.data() : {};
-    const keepIds = new Set([
-      material.fileId,
-      ...((material.images || []).map((im) => im.fileId)),
-    ].filter(Boolean));
-
-    let pageToken;
-    let checked = 0, deleted = 0, trashed = 0, failed = 0;
-    do {
-      const list = await drive.files.list({
-        q: `'${DRIVE_FOLDER_ID}' in parents and trashed = false`,
-        fields: "nextPageToken, files(id, name)",
-        pageToken,
-      });
-      for (const file of list.data.files || []) {
-        if (!/^(material__|material-page__)/.test(file.name)) continue;
-        if (keepIds.has(file.id)) continue;
-        checked++;
-        const result = await deleteOrTrashFile(file.id);
-        if (result === "deleted") deleted++;
-        else if (result === "trashed") trashed++;
-        else failed++;
-      }
-      pageToken = list.data.nextPageToken;
-    } while (pageToken);
-    res.json({ ok: true, checked, deleted, trashed, failed });
+    const orphans = await findOrphanMaterialFiles();
+    if (req.query.apply !== "true") {
+      // Dry run: report what would be removed, touch nothing.
+      return res.json({ ok: true, applied: false, checked: orphans.length, files: orphans });
+    }
+    let trashed = 0, failed = 0;
+    for (const file of orphans) {
+      const result = await deleteOrTrashFile(file.id);
+      if (result === "trashed") trashed++; else failed++;
+    }
+    res.json({ ok: true, applied: true, checked: orphans.length, trashed, failed });
   } catch (err) {
     console.error("purge-orphans failed", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Undoes a trash — for recovering a file that a delete/purge above was
+// wrong to touch. Only works while Drive still has it in the trash (Google
+// auto-empties trash after ~30 days); files.delete elsewhere in this file
+// no longer performs a hard delete for exactly this reason.
+app.post("/drive/restore/:fileId", requireAdmin, async (req, res) => {
+  try {
+    await drive.files.update({ fileId: req.params.fileId, requestBody: { trashed: false } });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("restore failed", err);
     res.status(500).json({ error: err.message });
   }
 });

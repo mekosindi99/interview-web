@@ -818,23 +818,27 @@ function renderExamSettingsTab() {
     };
     wrap.appendChild(secCard);
 
-    // ---- Orphaned-file cleanup: deletes/images that failed to actually
-    // delete from Drive in the past (a bug now fixed server-side, but it
-    // could already have left files behind with nothing in the app
-    // pointing at them) show up here as wasted, invisible storage. ----
+    // ---- Orphaned-file cleanup: files that failed to actually delete from
+    // Drive in the past (a bug now fixed server-side) show up here as
+    // wasted, invisible storage. Two steps on purpose — preview first
+    // (touches nothing), then a separate confirm — after an earlier
+    // one-click version of this wrongly removed a file that was still in
+    // use. Deletes are also trash-only now (recoverable for ~30 days), not
+    // permanent, as a second safety net. ----
     const purgeCard = el(`
       <div class="card">
         <h3>${L("purgeOrphansTitle")}</h3>
         <p class="hint">${L("purgeOrphansHint")}</p>
-        <button type="button" id="purge-orphans-btn" class="ghost">${L("purgeOrphansBtn")}</button>
-        <div id="purge-orphans-msg" style="margin-top:8px"></div>
+        <button type="button" id="purge-scan-btn" class="ghost">${L("purgeOrphansScanBtn")}</button>
+        <div id="purge-orphans-body" style="margin-top:8px"></div>
       </div>
     `);
-    const purgeBtn = purgeCard.querySelector("#purge-orphans-btn");
-    const purgeMsg = purgeCard.querySelector("#purge-orphans-msg");
-    purgeBtn.onclick = async () => {
-      purgeBtn.disabled = true;
-      purgeMsg.textContent = L("loading");
+    const purgeScanBtn = purgeCard.querySelector("#purge-scan-btn");
+    const purgeBody = purgeCard.querySelector("#purge-orphans-body");
+    purgeScanBtn.onclick = async () => {
+      purgeScanBtn.disabled = true;
+      purgeBody.innerHTML = "";
+      purgeBody.textContent = L("loading");
       try {
         const token = await state.user.getIdToken();
         const res = await fetch(`${ADMIN_SERVER_URL}/drive/purge-orphans`, {
@@ -843,15 +847,76 @@ function renderExamSettingsTab() {
         });
         const body = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(body.error || res.statusText);
-        purgeMsg.textContent = L("purgeOrphansDone", { checked: body.checked, deleted: body.deleted + body.trashed });
-        purgeMsg.className = "notice";
+        purgeBody.innerHTML = "";
+        if (!body.files.length) {
+          purgeBody.textContent = L("purgeOrphansNone");
+        } else {
+          purgeBody.appendChild(el(`<p class="notice">${L("purgeOrphansFound", { n: body.files.length })}</p>`));
+          const list = el(`<ul class="about-list">${body.files.map((f) => `<li class="mono">${escapeHtml(f.name)}</li>`).join("")}</ul>`);
+          purgeBody.appendChild(list);
+          const confirmBtn = el(`<button type="button" class="link danger">${L("purgeOrphansConfirmBtn")}</button>`);
+          confirmBtn.onclick = async () => {
+            if (!confirm(L("purgeOrphansConfirmAlert", { n: body.files.length }))) return;
+            confirmBtn.disabled = true;
+            try {
+              const token2 = await state.user.getIdToken();
+              const res2 = await fetch(`${ADMIN_SERVER_URL}/drive/purge-orphans?apply=true`, {
+                method: "POST",
+                headers: { Authorization: `Bearer ${token2}` },
+              });
+              const body2 = await res2.json().catch(() => ({}));
+              if (!res2.ok) throw new Error(body2.error || res2.statusText);
+              purgeBody.innerHTML = `<p class="notice">${L("purgeOrphansDone", { checked: body2.checked, deleted: body2.trashed })}</p>`;
+            } catch (err) {
+              alert(`${L("error")}: ${err.message}`);
+              confirmBtn.disabled = false;
+            }
+          };
+          purgeBody.appendChild(confirmBtn);
+        }
       } catch (err) {
-        purgeMsg.textContent = `${L("error")}: ${err.message}`;
-        purgeMsg.className = "err";
+        purgeBody.textContent = `${L("error")}: ${err.message}`;
       }
-      purgeBtn.disabled = false;
+      purgeScanBtn.disabled = false;
     };
     wrap.appendChild(purgeCard);
+
+    // ---- Restore-by-id: undo a trash if a delete/purge above was wrong to
+    // touch a file (Drive keeps trashed files for ~30 days). ----
+    const restoreCard = el(`
+      <div class="card">
+        <h3>${L("restoreFileTitle")}</h3>
+        <p class="hint">${L("restoreFileHint")}</p>
+        <div class="row-actions" style="align-items:center">
+          <input type="text" id="restore-file-id" placeholder="${L("restoreFileIdPlaceholder")}" style="flex:1;min-width:200px" />
+          <button type="button" id="restore-file-btn" class="ghost">${L("restoreFileBtn")}</button>
+        </div>
+        <div id="restore-file-msg" style="margin-top:8px"></div>
+      </div>
+    `);
+    restoreCard.querySelector("#restore-file-btn").onclick = async () => {
+      const idInput = restoreCard.querySelector("#restore-file-id");
+      const msg = restoreCard.querySelector("#restore-file-msg");
+      const fileId = idInput.value.trim();
+      if (!fileId) return;
+      msg.textContent = L("loading");
+      msg.className = "";
+      try {
+        const token = await state.user.getIdToken();
+        const res = await fetch(`${ADMIN_SERVER_URL}/drive/restore/${encodeURIComponent(fileId)}`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || res.statusText);
+        msg.textContent = L("restoreFileDone");
+        msg.className = "notice";
+      } catch (err) {
+        msg.textContent = `${L("error")}: ${err.message}`;
+        msg.className = "err";
+      }
+    };
+    wrap.appendChild(restoreCard);
   }
 
   return wrap;
