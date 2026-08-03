@@ -248,6 +248,16 @@ table.grid th { background: #fafafa; color: var(--muted); font-weight: 600; }
 .row-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 table.grid .mono { font-family: "Courier New", monospace; letter-spacing: .5px; }
 
+.leaderboard-table th { text-align: center; }
+.leaderboard-table td { text-align: center; }
+.leaderboard-table td.leaderboard-name { text-align: start; font-weight: 700; }
+.leaderboard-rank { font-size: 17px; font-weight: 800; color: var(--muted); }
+.leaderboard-total { font-size: 17px; font-weight: 800; color: var(--primary); }
+.leaderboard-table tbody tr:nth-child(even) { background: var(--bg); }
+.leaderboard-row-top { background: color-mix(in srgb, var(--primary) 6%, transparent) !important; }
+.leaderboard-row-me { outline: 2px solid var(--primary); outline-offset: -2px; }
+.leaderboard-row-me td.leaderboard-name .tag { background: var(--primary); color: #fff; font-weight: 700; }
+
 .q-list { display: flex; flex-direction: column; gap: 10px; }
 .q-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
 .q-card.inactive { opacity: .55; }

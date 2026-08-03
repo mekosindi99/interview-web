@@ -2765,12 +2765,16 @@ function renderLeaderboard() {
       return ad - bd;
     });
     const acceptCount = state.examConfig.acceptCount || 0;
+    // Only show a section column if someone actually has points allotted in
+    // it — otherwise every exam with, say, no speaking/writing questions at
+    // all still shows two dead "0/0" columns for every single row.
     const usedSections = new Set();
-    rows.forEach((row) => Object.keys(row.sectionScores || {}).forEach((s) => usedSections.add(s)));
+    rows.forEach((row) => SECTIONS.forEach((s) => { if ((row.sectionScores?.[s]?.total || 0) > 0) usedSections.add(s); }));
     const sectionCols = SECTIONS.filter((s) => usedSections.has(s));
+    const RANK_MEDAL = { 1: "🥇", 2: "🥈", 3: "🥉" };
     const tableWrap = el(`
       <div class="table-scroll">
-        <table class="grid">
+        <table class="grid leaderboard-table">
           <thead><tr>
             <th>#</th><th>${L("name")}</th><th>${L("phone")}</th>
             ${sectionCols.map((s) => `<th>${L(s)}</th>`).join("")}
@@ -2788,12 +2792,12 @@ function renderLeaderboard() {
       const ss = row.sectionScores || {};
       const accepted = acceptCount > 0 && rank <= acceptCount;
       tbody.appendChild(el(`
-        <tr ${isMe ? 'style="font-weight:800"' : ""}>
-          <td>${rank}</td>
-          <td>${escapeHtml(row.name || "")}</td>
+        <tr class="${isMe ? "leaderboard-row-me" : ""} ${rank <= 3 ? "leaderboard-row-top" : ""}">
+          <td class="leaderboard-rank">${RANK_MEDAL[rank] || rank}</td>
+          <td class="leaderboard-name">${escapeHtml(row.name || "")}${isMe ? ` <span class="tag">${L("me")}</span>` : ""}</td>
           <td class="mono">${escapeHtml(row.phoneMasked || "")}</td>
           ${sectionCols.map((s) => `<td>${ss[s] ? `${ss[s].score}/${ss[s].total}` : "—"}</td>`).join("")}
-          <td><b>${row.score ?? 0}</b></td>
+          <td class="leaderboard-total">${row.score ?? 0}</td>
           <td class="mono">${row.durationSec != null ? fmtTime(row.durationSec) : "—"}</td>
           ${acceptCount ? `<td>${accepted ? `<span class="status-badge graded">${L("admissionAccepted")}</span>` : ""}</td>` : ""}
         </tr>
