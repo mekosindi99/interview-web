@@ -1153,6 +1153,32 @@ function renderCandidatesTab() {
       const btn = makeChip("👁️", L("viewResult"));
       btn.onclick = () => setState({ adminTab: "candidates", viewCandidate: c.id });
       actions.appendChild(btn);
+      // Covers two cases in one click: (1) an exam with nothing manual to
+      // grade that got stuck at "submitted" before this was fixed
+      // server-side (see /leaderboard/sync's self-heal), and (2) just
+      // re-publishing after a score changed. Harmless to click on an
+      // already-published or still-pending-manual-grading result — the
+      // server only ever republishes/holds back based on the real
+      // attempts doc, never anything this button claims.
+      if (ADMIN_SERVER_URL) {
+        const syncBtn = makeChip("📊", L("syncLeaderboardBtn"));
+        syncBtn.onclick = async () => {
+          syncBtn.disabled = true;
+          try {
+            const token = await state.user.getIdToken();
+            const res = await fetch(`${ADMIN_SERVER_URL}/leaderboard/sync/${c.id}`, {
+              method: "POST", headers: { Authorization: `Bearer ${token}` },
+            });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(body.error || res.statusText);
+            alert(body.published ? L("syncLeaderboardDone") : L("syncLeaderboardPending"));
+          } catch (err) {
+            alert(`${L("error")}: ${err.message}`);
+          }
+          syncBtn.disabled = false;
+        };
+        actions.appendChild(syncBtn);
+      }
     }
     const devicesBtn = makeChip("📱", L("viewDevices"));
     devicesBtn.onclick = () => setState({ adminTab: "candidates", viewCandidateDevices: c.id });
@@ -2666,12 +2692,19 @@ async function submitExam(activeQs) {
   // Recorded so staff can see it — deliberately not fed into the score
   // itself (see candidate table below), just shown alongside it.
   const durationSec = examStartedAtMs ? Math.max(0, Math.round((Date.now() - examStartedAtMs) / 1000)) : null;
+  // An exam with no speaking/writing questions has nothing left for an
+  // admin to grade — it was previously always left at "submitted" (a
+  // leftover dead `hasManual ? "submitted" : "submitted"` ternary), which
+  // meant it could never reach "graded" through any action at all, and so
+  // never got published to the public leaderboard either (that only fires
+  // from the admin's manual-grading save).
+  const finalStatus = hasManual ? "submitted" : "graded";
   await setDoc(doc(db, "attempts", state.profile.id), {
     answers: examLocalAnswers,
     manualAnswers: examManualAnswers,
     autoScore, manualScore: 0, totalPoints, sectionScores,
     score: autoScore,
-    examStatus: hasManual ? "submitted" : "submitted",
+    examStatus: finalStatus,
     needsManualGrading: hasManual,
     submittedAt: serverTimestamp(),
     durationSec,
@@ -2679,6 +2712,19 @@ async function submitExam(activeQs) {
   // Note: score fields intentionally live only on the attempts doc —
   // candidates can't write "score" on their own users doc (see firestore.rules).
   await updateDoc(doc(db, "users", state.profile.id), { examStatus: "submitted" });
+  // Publishes the leaderboard entry immediately when there was nothing left
+  // to grade — mirrors the same best-effort sync call the admin's manual
+  // grading save makes (see renderCandidateResultPanel). The server only
+  // ever trusts the score it reads back from this very attempts doc, never
+  // anything the client sends, so a candidate calling this for their own
+  // uid can't fake a result.
+  if (!hasManual && ADMIN_SERVER_URL) {
+    state.user.getIdToken().then((token) =>
+      fetch(`${ADMIN_SERVER_URL}/leaderboard/sync/${state.profile.id}`, {
+        method: "POST", headers: { Authorization: `Bearer ${token}` },
+      })
+    ).catch(() => {});
+  }
   setState({ profile: { ...state.profile, examStatus: "submitted" } });
 }
 

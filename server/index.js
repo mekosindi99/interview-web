@@ -139,6 +139,28 @@ async function requireSignedIn(req, res, next) {
   }
 }
 
+// Lets a signed-in user act on their OWN record (req.params[paramName] ===
+// their own uid), or any staff member act on anyone's — used for
+// /leaderboard/sync so a candidate can publish their own result the moment
+// their exam is fully auto-graded (nothing manual left for an admin to do),
+// without opening this up to acting on someone else's uid.
+function requireSelfOrAdmin(paramName) {
+  return async (req, res, next) => {
+    try {
+      const authHeader = req.headers.authorization || "";
+      const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+      if (!token) return res.status(401).json({ error: "missing token" });
+      const decoded = await auth.verifyIdToken(token);
+      if (decoded.uid === req.params[paramName]) return next();
+      const snap = await db.collection("users").doc(decoded.uid).get();
+      if (snap.exists && (snap.data().role === "admin" || snap.data().role === "coadmin")) return next();
+      return res.status(403).json({ error: "forbidden" });
+    } catch (err) {
+      res.status(401).json({ error: "invalid token" });
+    }
+  };
+}
+
 // Records/updates a login-device fingerprint for the signed-in user —
 // IP, User-Agent-derived device type/browser, first/last seen, login count.
 // Written with the Admin SDK (bypasses Firestore rules entirely), keyed by
@@ -182,15 +204,17 @@ function maskPhone(phone) {
   return "*".repeat(digits.length - 4) + digits.slice(-4);
 }
 
-// Publishes (or removes) one candidate's public leaderboard entry —
-// admin-only, called right after the admin saves manual grading. Written
-// via the Admin SDK (bypasses Firestore rules) specifically so the
+// Publishes (or removes) one candidate's public leaderboard entry — called
+// right after the admin saves manual grading, OR by a candidate for their
+// OWN uid right after submitting an exam that had no speaking/writing
+// questions (nothing left for anyone to manually grade). Written via the
+// Admin SDK (bypasses Firestore rules) specifically so the
 // leaderboard/{uid} collection can stay client-write-disabled in
 // firestore.rules — a candidate could otherwise just write themselves a
 // fake #1 score directly. The score/section breakdown is read fresh from
 // attempts/{uid} here, never trusted from the request body, so there's
 // nothing for the client to lie about even indirectly.
-app.post("/leaderboard/sync/:uid", requireAdmin, async (req, res) => {
+app.post("/leaderboard/sync/:uid", requireSelfOrAdmin("uid"), async (req, res) => {
   try {
     const { uid } = req.params;
     const [userSnap, attemptSnap] = await Promise.all([
@@ -198,10 +222,20 @@ app.post("/leaderboard/sync/:uid", requireAdmin, async (req, res) => {
       db.collection("attempts").doc(uid).get(),
     ]);
     if (!userSnap.exists || !attemptSnap.exists) return res.status(404).json({ error: "not found" });
-    const attempt = attemptSnap.data();
+    let attempt = attemptSnap.data();
+    // Self-heals a now-fixed bug where an exam with no manual questions
+    // could get stuck at examStatus "submitted" forever (there was no
+    // grading form for an admin to ever save, so nothing could move it to
+    // "graded") — if there's truly nothing left to grade, treat it as
+    // graded here rather than leaving an already-finished result stuck off
+    // the board.
+    if (attempt.examStatus !== "graded" && !attempt.needsManualGrading) {
+      await db.collection("attempts").doc(uid).update({ examStatus: "graded" });
+      attempt = { ...attempt, examStatus: "graded" };
+    }
     if (attempt.examStatus !== "graded") {
-      // Not (or no longer) graded — make sure any previous entry is gone
-      // instead of leaving a stale score on the board.
+      // Genuinely still pending manual grading — make sure any previous
+      // entry is gone instead of leaving a stale score on the board.
       await db.collection("leaderboard").doc(uid).delete().catch(() => {});
       return res.json({ ok: true, published: false });
     }
