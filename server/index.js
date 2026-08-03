@@ -394,15 +394,14 @@ app.get("/oauth/callback", async (req, res) => {
 // the canvas, never baked into the file itself).
 app.get("/material/:fileId", requireSignedIn, async (req, res) => {
   try {
-    // Fetch the size first so we can set Content-Length — without it,
-    // pdf.js (client sends disableRange/disableStream too, belt-and-braces)
-    // has nothing to measure a plain proxied stream's progress against and
-    // can hang indefinitely instead of erroring.
-    const meta = await drive.files.get({ fileId: req.params.fileId, fields: "size" });
-    const driveRes = await drive.files.get(
-      { fileId: req.params.fileId, alt: "media" },
-      { responseType: "stream" }
-    );
+    // Size + the actual media stream are independent Drive API calls — they
+    // were awaited one after another, so every request paid for both round
+    // trips back-to-back. Firing them together roughly halves this route's
+    // own latency on top of Drive's.
+    const [meta, driveRes] = await Promise.all([
+      drive.files.get({ fileId: req.params.fileId, fields: "size" }),
+      drive.files.get({ fileId: req.params.fileId, alt: "media" }, { responseType: "stream" }),
+    ]);
     res.setHeader("Content-Type", "application/pdf");
     if (meta.data.size) res.setHeader("Content-Length", meta.data.size);
     res.setHeader("Cache-Control", "private, max-age=31536000, immutable");
@@ -413,11 +412,40 @@ app.get("/material/:fileId", requireSignedIn, async (req, res) => {
   }
 });
 
+// Small in-memory cache for material-page images: once any signed-in user
+// has fetched a given page, every subsequent request for it (a different
+// candidate, or the same one reopening later) is served straight from RAM
+// instead of round-tripping to Drive again — Drive's own per-request
+// latency, not just the extra hop through this server, was a real part of
+// "everything about opening material feels slow". Bounded by byte budget,
+// not entry count, since pages vary in size after compression; oldest
+// entries are evicted first once the budget is exceeded. Lives only for
+// this server process's uptime (cleared on every redeploy/restart) — never
+// a substitute for Drive being the actual source of truth.
+const imageCache = new Map(); // fileId -> Buffer
+let imageCacheBytes = 0;
+const IMAGE_CACHE_BUDGET = 80 * 1024 * 1024; // 80MB — comfortable on Render's free-tier RAM
+function cacheImage(fileId, buffer) {
+  imageCache.set(fileId, buffer);
+  imageCacheBytes += buffer.length;
+  while (imageCacheBytes > IMAGE_CACHE_BUDGET && imageCache.size > 1) {
+    const oldestKey = imageCache.keys().next().value;
+    imageCacheBytes -= imageCache.get(oldestKey).length;
+    imageCache.delete(oldestKey);
+  }
+}
+
 // Same idea as the PDF proxy above, for a single material-page image —
 // authenticated (not a public Drive URL) so images stay behind a login,
 // same as the PDF and everything else here.
 app.get("/material-image/:fileId", requireSignedIn, async (req, res) => {
   try {
+    const cached = imageCache.get(req.params.fileId);
+    if (cached) {
+      res.setHeader("Content-Type", "image/jpeg");
+      res.setHeader("Cache-Control", "private, max-age=31536000, immutable");
+      return res.end(cached);
+    }
     // No metadata pre-fetch here (unlike the PDF proxy above) — every page
     // image is re-encoded to JPEG at upload time (see /uploads/material-images),
     // so the type is already known and this saves a whole extra Drive API
@@ -426,6 +454,9 @@ app.get("/material-image/:fileId", requireSignedIn, async (req, res) => {
       { fileId: req.params.fileId, alt: "media" },
       { responseType: "stream" }
     );
+    const chunks = [];
+    driveRes.data.on("data", (c) => chunks.push(c));
+    driveRes.data.on("end", () => cacheImage(req.params.fileId, Buffer.concat(chunks)));
     res.setHeader("Content-Type", "image/jpeg");
     // The image behind a given fileId never changes (replacing a page
     // uploads a new fileId instead) — safe for the browser to cache it
