@@ -2793,7 +2793,7 @@ function renderLeaderboard() {
       const accepted = acceptCount > 0 && rank <= acceptCount;
       tbody.appendChild(el(`
         <tr class="${isMe ? "leaderboard-row-me" : ""} ${rank <= 3 ? "leaderboard-row-top" : ""}">
-          <td class="leaderboard-rank">${RANK_MEDAL[rank] || rank}</td>
+          <td class="leaderboard-rank">${rank}${RANK_MEDAL[rank] ? ` ${RANK_MEDAL[rank]}` : ""}</td>
           <td class="leaderboard-name">${escapeHtml(row.name || "")}${isMe ? ` <span class="tag">${L("me")}</span>` : ""}</td>
           <td class="mono">${escapeHtml(row.phoneMasked || "")}</td>
           ${sectionCols.map((s) => `<td>${ss[s] ? `${ss[s].score}/${ss[s].total}` : "—"}</td>`).join("")}
