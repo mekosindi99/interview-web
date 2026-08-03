@@ -265,15 +265,23 @@ table.grid .mono { font-family: "Courier New", monospace; letter-spacing: .5px; 
    plus a pulsing glow, since a plain outline was too easy to miss. Applied
    per-cell (not on the <tr> itself) because box-shadow on a table row
    doesn't render reliably under border-collapse. */
+/* One continuous pill around the whole row, not a separate box per cell:
+   a shared top/bottom border (cells touch, so it reads as one line across
+   all of them) with rounding only on the row's two outer corners, and a
+   glow that isn't inset so it bleeds outward across the cell seams instead
+   of stopping at each one. */
 .leaderboard-row-me td {
   background: color-mix(in srgb, var(--me-highlight) 16%, var(--card)) !important;
-  box-shadow: inset 0 0 0 2px var(--me-highlight);
+  border-top: 2px solid var(--me-highlight) !important;
+  border-bottom: 2px solid var(--me-highlight) !important;
   animation: leaderboard-glow 1.6s ease-in-out infinite;
 }
+.leaderboard-row-me td:first-child { border-radius: 0 12px 12px 0; border-inline-end: 2px solid var(--me-highlight); }
+.leaderboard-row-me td:last-child { border-radius: 12px 0 0 12px; border-inline-start: 2px solid var(--me-highlight); }
 .leaderboard-row-me td.leaderboard-name .tag { background: var(--me-highlight); color: #fff; font-weight: 700; }
 @keyframes leaderboard-glow {
-  0%, 100% { box-shadow: inset 0 0 0 2px var(--me-highlight), 0 0 0 0 color-mix(in srgb, var(--me-highlight) 45%, transparent); }
-  50% { box-shadow: inset 0 0 0 2px var(--me-highlight), 0 0 10px 3px color-mix(in srgb, var(--me-highlight) 55%, transparent); }
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--me-highlight) 45%, transparent); }
+  50% { box-shadow: 0 0 12px 3px color-mix(in srgb, var(--me-highlight) 55%, transparent); }
 }
 
 .q-list { display: flex; flex-direction: column; gap: 10px; }
