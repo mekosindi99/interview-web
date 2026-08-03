@@ -363,6 +363,12 @@ table.grid .mono { font-family: "Courier New", monospace; letter-spacing: .5px; 
 .page-nav-btn.next { inset-inline-end: 8px; }
 .page-nav-btn:disabled { opacity: 0; pointer-events: none; }
 
+.boot-loading { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; min-height: 60vh; }
+.boot-spinner {
+  width: 36px; height: 36px; border-radius: 50%;
+  border: 3px solid var(--border); border-top-color: var(--primary);
+  animation: spin .7s linear infinite;
+}
 .page-spinner {
   position: absolute; top: 50%; left: 50%; margin: -18px 0 0 -18px; z-index: 6;
   width: 36px; height: 36px; border-radius: 50%;

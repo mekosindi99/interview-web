@@ -8,9 +8,28 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
+  <!-- The app itself (Firebase SDK + our code) loads from these — starting
+       the DNS/TLS handshake now, in parallel with everything else the page
+       is doing, instead of only once the <script type="module"> tag below
+       is reached, is what actually shaves real time off "the site feels
+       slow to open" for every role, since it happens before any
+       role-specific logic even runs. -->
+  <link rel="preconnect" href="https://www.gstatic.com" crossorigin />
+  <link rel="preconnect" href="https://firestore.googleapis.com" />
+  <link rel="preconnect" href="https://identitytoolkit.googleapis.com" />
 </head>
 <body>
-  <div id="app"></div>
+  <div id="app">
+    <!-- Static fallback shown the instant the HTML/CSS paint, before
+         js/app.js (which needs the Firebase SDK modules to finish loading
+         first) has run and taken over #app — otherwise the page looks
+         blank/stuck for however long that takes. app.js's own first
+         render() call replaces this immediately once it runs. -->
+    <div class="boot-loading">
+      <img class="brand-logo" src="assets/brand/logo.svg" alt="" />
+      <div class="boot-spinner"></div>
+    </div>
+  </div>
   <script type="module" src="js/app.js"></script>
 </body>
 </html>
