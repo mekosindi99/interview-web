@@ -33,6 +33,38 @@ async function uploadViaServer(path, file) {
   if (!res.ok) throw new Error(body.error || res.statusText);
   return body;
 }
+
+// Speaking recordings are private on Drive (server/index.js's
+// uploadToDrive isn't given isPublic there) — playback only ever goes
+// through this authenticated proxy, never a bare Drive link, cached per
+// fileId so re-renders don't re-fetch. Older saved answers only have the
+// old public "…uc?export=download&id=XXXX" URL, not a bare fileId, so pull
+// the id back out of that shape too.
+const audioBlobUrlCache = {};
+function driveFileIdFromUrl(url) {
+  const m = /[?&]id=([^&]+)/.exec(url || "");
+  return m ? m[1] : null;
+}
+async function getSpeakingAudioUrl(ans) {
+  const fileId = ans?.fileId || driveFileIdFromUrl(ans?.audioUrl);
+  if (!fileId) return null;
+  if (audioBlobUrlCache[fileId]) return audioBlobUrlCache[fileId];
+  if (!ADMIN_SERVER_URL) return null;
+  const token = await state.user.getIdToken();
+  const res = await fetch(`${ADMIN_SERVER_URL}/audio/${fileId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return null;
+  const url = URL.createObjectURL(await res.blob());
+  audioBlobUrlCache[fileId] = url;
+  return url;
+}
+// Fills in an <audio> element's src asynchronously via the authenticated
+// proxy above instead of a plain src="" attribute (there's no way to send
+// an Authorization header on an <audio> tag itself).
+function wireSpeakingAudio(audioEl, ans) {
+  getSpeakingAudioUrl(ans).then((url) => { if (url) audioEl.src = url; }).catch(() => {});
+}
 // Explicit local persistence: keep the session in this browser across tab
 // closes / restarts, so the login screen isn't shown again on the same
 // device until the user explicitly signs out.
@@ -1149,9 +1181,13 @@ function renderCandidateResultPanel(c) {
         const row = el(`<div class="review-row"></div>`);
         row.appendChild(el(`<div><b>${i + 1}.</b> ${escapeHtml(q.text[state.lang] || q.text.ar)}</div>`));
         if (q.type === "speaking") {
-          row.appendChild(ans?.audioUrl
-            ? el(`<audio controls src="${ans.audioUrl}"></audio>`)
-            : el(`<p class="hint">${L("noAnswerGiven")}</p>`));
+          if (ans?.fileId || ans?.audioUrl) {
+            const audioEl = el(`<audio controls></audio>`);
+            wireSpeakingAudio(audioEl, ans);
+            row.appendChild(audioEl);
+          } else {
+            row.appendChild(el(`<p class="hint">${L("noAnswerGiven")}</p>`));
+          }
         } else {
           row.appendChild(el(`<p class="writing-answer-view">${escapeHtml(ans?.text || "")}</p>`));
           if (!ans?.text) row.appendChild(el(`<p class="hint">${L("noAnswerGiven")}</p>`));
@@ -2254,8 +2290,9 @@ function renderQuestionAnswerUI(optHost, q) {
 }
 
 function renderSpeakingWidget(q) {
-  const existingUrl = examManualAnswers[q.id]?.audioUrl;
-  const st = speakingState[q.id] || (existingUrl ? "recorded" : "idle");
+  const existingAns = examManualAnswers[q.id];
+  const hasExisting = !!(existingAns?.fileId || existingAns?.audioUrl);
+  const st = speakingState[q.id] || (hasExisting ? "recorded" : "idle");
   const wrap = el(`<div class="speaking-widget"></div>`);
   if (st === "uploading") {
     wrap.appendChild(el(`<p class="hint">${L("uploadingAudio")}</p>`));
@@ -2268,8 +2305,10 @@ function renderSpeakingWidget(q) {
     wrap.appendChild(stopBtn);
     return wrap;
   }
-  if (st === "recorded" && existingUrl) {
-    wrap.appendChild(el(`<audio controls src="${existingUrl}"></audio>`));
+  if (st === "recorded" && hasExisting) {
+    const audioEl = el(`<audio controls></audio>`);
+    wireSpeakingAudio(audioEl, existingAns);
+    wrap.appendChild(audioEl);
     const reBtn = el(`<button type="button" class="ghost">${L("reRecord")}</button>`);
     reBtn.onclick = () => startRecording(q.id);
     wrap.appendChild(reBtn);
@@ -2293,8 +2332,8 @@ async function startRecording(qid) {
       speakingState[qid] = "uploading";
       render();
       try {
-        const { url } = await uploadViaServer(`/uploads/speaking/${qid}`, blob);
-        examManualAnswers[qid] = { audioUrl: url };
+        const { fileId } = await uploadViaServer(`/uploads/speaking/${qid}`, blob);
+        examManualAnswers[qid] = { fileId };
         speakingState[qid] = "recorded";
         saveExamProgress();
       } catch (err) {
@@ -2501,7 +2540,13 @@ function renderResult() {
         const row = el(`<div class="review-row"></div>`);
         row.appendChild(el(`<div><b>${i + 1}.</b> ${escapeHtml(q.text[qLang(q)] || q.text.ar)}</div>`));
         if (q.type === "speaking") {
-          row.appendChild(ans?.audioUrl ? el(`<audio controls src="${ans.audioUrl}"></audio>`) : el(`<p class="hint">${L("noAnswerGiven")}</p>`));
+          if (ans?.fileId || ans?.audioUrl) {
+            const audioEl = el(`<audio controls></audio>`);
+            wireSpeakingAudio(audioEl, ans);
+            row.appendChild(audioEl);
+          } else {
+            row.appendChild(el(`<p class="hint">${L("noAnswerGiven")}</p>`));
+          }
         } else {
           row.appendChild(el(`<p class="writing-answer-view">${escapeHtml(ans?.text || "")}</p>`));
         }

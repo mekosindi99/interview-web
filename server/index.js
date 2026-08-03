@@ -52,17 +52,24 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 
 
 // Uploads a buffer to Drive (flat inside DRIVE_FOLDER_ID — no subfolders,
 // since drive.file scope can't reliably list/find existing folders it
-// didn't create itself) and makes it link-readable. Drive has no per-user
-// ACL for files uploaded this way without per-candidate OAuth — an
-// accepted trade-off vs. Firebase Storage rules.
-async function uploadToDrive({ name, mimeType, buffer }) {
+// didn't create itself). By default the file is left PRIVATE (readable
+// only by the OAuth-owning Drive account) and must be fetched through one
+// of this server's own authenticated proxy routes (/material, /material-image,
+// /audio) — that's what actually enforces "must be signed in" instead of
+// "must have the link". Only pass isPublic:true for content that is not
+// personal/sensitive and is fine being reachable by anyone who has the
+// direct Drive link (e.g. the listening-section prompt audio, which is the
+// same admin-uploaded clip every candidate hears).
+async function uploadToDrive({ name, mimeType, buffer, isPublic = false }) {
   const res = await drive.files.create({
     requestBody: { name, parents: [DRIVE_FOLDER_ID] },
     media: { mimeType, body: Readable.from(buffer) },
     fields: "id",
   });
   const fileId = res.data.id;
-  await drive.permissions.create({ fileId, requestBody: { role: "reader", type: "anyone" } });
+  if (isPublic) {
+    await drive.permissions.create({ fileId, requestBody: { role: "reader", type: "anyone" } });
+  }
   return fileId;
 }
 const driveDirectUrl = (fileId) => `https://drive.google.com/uc?export=download&id=${fileId}`;
@@ -163,6 +170,9 @@ app.post("/log-login", requireSignedIn, async (req, res) => {
 // Candidate's own speaking-answer recording — flat filename
 // speaking__{verifiedUid}__{qid}.webm, made link-readable, URL returned for
 // the client to store on the attempt doc.
+// Candidate's own voice — the most sensitive file this app ever stores, so
+// it stays PRIVATE on Drive; playback only ever goes through the
+// authenticated GET /audio/:fileId proxy below, never a public Drive link.
 app.post("/uploads/speaking/:qid", requireSignedIn, upload.single("file"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "no file" });
@@ -170,20 +180,22 @@ app.post("/uploads/speaking/:qid", requireSignedIn, upload.single("file"), async
       name: `speaking__${req.uid}__${req.params.qid}.webm`,
       mimeType: req.file.mimetype || "audio/webm", buffer: req.file.buffer,
     });
-    res.json({ url: driveDirectUrl(fileId), fileId });
+    res.json({ fileId });
   } catch (err) {
     console.error("speaking upload failed", err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// Listening-section prompt audio — admin only.
+// Listening-section prompt audio — admin only. Not personal data (same
+// admin-authored clip every candidate hears), so it's fine left publicly
+// link-readable — the client plays it directly via <audio src>.
 app.post("/uploads/listening", requireAdmin, upload.single("file"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "no file" });
     const fileId = await uploadToDrive({
       name: `listening__${Date.now()}__${req.file.originalname}`,
-      mimeType: req.file.mimetype || "audio/mpeg", buffer: req.file.buffer,
+      mimeType: req.file.mimetype || "audio/mpeg", buffer: req.file.buffer, isPublic: true,
     });
     res.json({ url: driveDirectUrl(fileId), fileId });
   } catch (err) {
@@ -192,10 +204,10 @@ app.post("/uploads/listening", requireAdmin, upload.single("file"), async (req, 
   }
 });
 
-// Training-material PDF — admin only. Returns fileId (not just a URL): the
-// client reads it back through GET /material/:fileId below, not Drive's own
-// download URL, because pdf.js needs a CORS-enabled response and Drive's
-// download endpoint doesn't send those headers.
+// Training-material PDF — admin only. Kept private on Drive; the client
+// reads it back through GET /material/:fileId below (both because pdf.js
+// needs a CORS-enabled response Drive's own download URL doesn't send, and
+// so an un-watermarked copy is never reachable without being signed in).
 app.post("/uploads/material", requireAdmin, upload.single("file"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "no file" });
@@ -324,6 +336,62 @@ app.get("/material-image/:fileId", requireSignedIn, async (req, res) => {
     driveRes.data.pipe(res);
   } catch (err) {
     console.error("material image proxy failed", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Streams a candidate's private speaking recording — signed-in only (staff
+// grading it, or the candidate reviewing their own before submit). Same
+// pattern as the material proxies above: the file itself is never public on
+// Drive, only reachable through here.
+app.get("/audio/:fileId", requireSignedIn, async (req, res) => {
+  try {
+    const meta = await drive.files.get({ fileId: req.params.fileId, fields: "size,mimeType" });
+    const driveRes = await drive.files.get(
+      { fileId: req.params.fileId, alt: "media" },
+      { responseType: "stream" }
+    );
+    res.setHeader("Content-Type", meta.data.mimeType || "audio/webm");
+    if (meta.data.size) res.setHeader("Content-Length", meta.data.size);
+    driveRes.data.pipe(res);
+  } catch (err) {
+    console.error("audio proxy failed", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// One-time cleanup: earlier versions of this server made every upload
+// publicly link-readable on Drive ("anyone with the link"). This revokes
+// that public grant from anything already uploaded that should never have
+// been public — speaking recordings and training material — so they can
+// only be reached through the authenticated proxies above from now on.
+// Safe to call more than once; listening-prompt audio (deliberately public,
+// see /uploads/listening) is left untouched.
+app.post("/drive/revoke-public", requireAdmin, async (req, res) => {
+  try {
+    let pageToken;
+    let checked = 0, revoked = 0;
+    do {
+      const list = await drive.files.list({
+        q: `'${DRIVE_FOLDER_ID}' in parents and trashed = false`,
+        fields: "nextPageToken, files(id, name)",
+        pageToken,
+      });
+      for (const file of list.data.files || []) {
+        if (!/^(speaking__|material__|material-page__)/.test(file.name)) continue;
+        checked++;
+        const perms = await drive.permissions.list({ fileId: file.id, fields: "permissions(id,type)" });
+        const anyone = (perms.data.permissions || []).find((p) => p.type === "anyone");
+        if (anyone) {
+          await drive.permissions.delete({ fileId: file.id, permissionId: anyone.id });
+          revoked++;
+        }
+      }
+      pageToken = list.data.nextPageToken;
+    } while (pageToken);
+    res.json({ ok: true, checked, revoked });
+  } catch (err) {
+    console.error("revoke-public failed", err);
     res.status(500).json({ error: err.message });
   }
 });

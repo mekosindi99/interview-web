@@ -97,7 +97,13 @@ service cloud.firestore {
     // out everyone else on that network too. Not a hard security boundary
     // (client-reported device id).
     match /blockedDevices/{id} {
-      allow read: if isSignedIn();
+      // Split get/list: the client only ever needs to look up its OWN
+      // device id by name (a single get, done right after sign-in) — it
+      // never needs to enumerate the whole collection. Restricting list to
+      // staff stops a signed-in candidate from listing every blocked
+      // device id via an unfiltered collection query.
+      allow get: if isSignedIn();
+      allow list: if isStaff();
       allow write: if isStaff();
     }
 
