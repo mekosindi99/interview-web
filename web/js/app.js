@@ -817,6 +817,41 @@ function renderExamSettingsTab() {
       revokeBtn.disabled = false;
     };
     wrap.appendChild(secCard);
+
+    // ---- Orphaned-file cleanup: deletes/images that failed to actually
+    // delete from Drive in the past (a bug now fixed server-side, but it
+    // could already have left files behind with nothing in the app
+    // pointing at them) show up here as wasted, invisible storage. ----
+    const purgeCard = el(`
+      <div class="card">
+        <h3>${L("purgeOrphansTitle")}</h3>
+        <p class="hint">${L("purgeOrphansHint")}</p>
+        <button type="button" id="purge-orphans-btn" class="ghost">${L("purgeOrphansBtn")}</button>
+        <div id="purge-orphans-msg" style="margin-top:8px"></div>
+      </div>
+    `);
+    const purgeBtn = purgeCard.querySelector("#purge-orphans-btn");
+    const purgeMsg = purgeCard.querySelector("#purge-orphans-msg");
+    purgeBtn.onclick = async () => {
+      purgeBtn.disabled = true;
+      purgeMsg.textContent = L("loading");
+      try {
+        const token = await state.user.getIdToken();
+        const res = await fetch(`${ADMIN_SERVER_URL}/drive/purge-orphans`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || res.statusText);
+        purgeMsg.textContent = L("purgeOrphansDone", { checked: body.checked, deleted: body.deleted + body.trashed });
+        purgeMsg.className = "notice";
+      } catch (err) {
+        purgeMsg.textContent = `${L("error")}: ${err.message}`;
+        purgeMsg.className = "err";
+      }
+      purgeBtn.disabled = false;
+    };
+    wrap.appendChild(purgeCard);
   }
 
   return wrap;

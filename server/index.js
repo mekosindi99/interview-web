@@ -259,13 +259,34 @@ app.post("/uploads/material-images", requireAdmin, upload.array("files", 200), a
   }
 });
 
+// Best-effort permanent delete, falling back to trashing the file instead
+// of silently giving up — a straight files.delete can fail for reasons
+// that don't mean "this file is fine to leave behind" (e.g. propagation
+// delay right after a permissions change), and previously any failure here
+// was swallowed with .catch(() => {}), so the file quietly stayed in Drive
+// forever with nothing in the app pointing at it anymore.
+async function deleteOrTrashFile(fileId) {
+  try {
+    await drive.files.delete({ fileId });
+    return "deleted";
+  } catch (err) {
+    try {
+      await drive.files.update({ fileId, requestBody: { trashed: true } });
+      return "trashed";
+    } catch (err2) {
+      return "failed";
+    }
+  }
+}
+
 // Deletes a batch of material-page images from Drive (admin only) — used
 // when the admin replaces or clears the image set.
 app.delete("/material-images", requireAdmin, async (req, res) => {
   try {
     const fileIds = Array.isArray(req.body?.fileIds) ? req.body.fileIds : [];
-    await Promise.all(fileIds.map((id) => drive.files.delete({ fileId: id }).catch(() => {})));
-    res.json({ ok: true });
+    const results = await Promise.all(fileIds.map((id) => deleteOrTrashFile(id)));
+    const failed = fileIds.filter((_, i) => results[i] === "failed");
+    res.json({ ok: true, deleted: results.filter((r) => r === "deleted").length, trashed: results.filter((r) => r === "trashed").length, failed });
   } catch (err) {
     console.error("material images delete failed", err);
     res.status(500).json({ error: err.message });
@@ -447,10 +468,52 @@ app.post("/drive/revoke-public", requireAdmin, async (req, res) => {
 // disappear for every candidate (they all read that one shared doc).
 app.delete("/material/:fileId", requireAdmin, async (req, res) => {
   try {
-    await drive.files.delete({ fileId: req.params.fileId });
-    res.json({ ok: true });
+    const result = await deleteOrTrashFile(req.params.fileId);
+    res.json({ ok: result !== "failed", result });
   } catch (err) {
     console.error("material delete failed", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// One-time cleanup: sweeps every material-page/material file sitting in the
+// Drive folder and removes anything no longer referenced by the live
+// settings/material doc in Firestore. Needed because earlier deletes
+// silently swallowed failures (see deleteOrTrashFile above) — any image
+// that failed to delete back then is now an orphan with no fileId left
+// anywhere in the app to target individually, so the only way to find it
+// again is to compare the whole folder against what's actually still in use.
+app.post("/drive/purge-orphans", requireAdmin, async (req, res) => {
+  try {
+    const materialSnap = await db.collection("settings").doc("material").get();
+    const material = materialSnap.exists ? materialSnap.data() : {};
+    const keepIds = new Set([
+      material.fileId,
+      ...((material.images || []).map((im) => im.fileId)),
+    ].filter(Boolean));
+
+    let pageToken;
+    let checked = 0, deleted = 0, trashed = 0, failed = 0;
+    do {
+      const list = await drive.files.list({
+        q: `'${DRIVE_FOLDER_ID}' in parents and trashed = false`,
+        fields: "nextPageToken, files(id, name)",
+        pageToken,
+      });
+      for (const file of list.data.files || []) {
+        if (!/^(material__|material-page__)/.test(file.name)) continue;
+        if (keepIds.has(file.id)) continue;
+        checked++;
+        const result = await deleteOrTrashFile(file.id);
+        if (result === "deleted") deleted++;
+        else if (result === "trashed") trashed++;
+        else failed++;
+      }
+      pageToken = list.data.nextPageToken;
+    } while (pageToken);
+    res.json({ ok: true, checked, deleted, trashed, failed });
+  } catch (err) {
+    console.error("purge-orphans failed", err);
     res.status(500).json({ error: err.message });
   }
 });
