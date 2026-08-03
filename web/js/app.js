@@ -739,6 +739,7 @@ function renderExamSettingsTab() {
 }
 
 const EXAM_STATUS_KEY = { not_started: "notStarted", in_progress: "inProgress", submitted: "submitted", graded: "graded" };
+const STATUS_BADGE_CLASS = { not_started: "not-started", in_progress: "in-progress", submitted: "submitted", graded: "graded" };
 function statusLabel(c) {
   if (c.blocked) return L("blocked");
   return L(EXAM_STATUS_KEY[c.examStatus] || "notStarted");
@@ -748,8 +749,14 @@ function statusLabel(c) {
 // login (not just the Firestore profile) — see server/README.md. Available
 // wherever a candidate row is shown, including already-hidden/removed ones,
 // since a soft-deleted profile can still have an orphaned Auth account.
+// Small icon+label pill for a candidate card's action row. variant is
+// "" (neutral) | "warn" | "danger", matching the existing button color scale.
+function makeChip(icon, label, variant = "") {
+  return el(`<button type="button" class="action-chip ${variant}"><span class="action-chip-icon">${icon}</span>${escapeHtml(label)}</button>`);
+}
+
 function makeHardDeleteBtn(c) {
-  const btn = el(`<button class="link danger">${L("hardDelete")}</button>`);
+  const btn = makeChip("⛔", L("hardDelete"), "danger");
   btn.onclick = async () => {
     if (!confirm(L("hardDeleteConfirm"))) return;
     try {
@@ -851,15 +858,7 @@ function renderCandidatesTab() {
           <option value="durationAsc">${L("sortDurationAsc")}</option>
         </select>
       </div>
-      <div class="table-scroll">
-        <table class="grid">
-          <thead><tr>
-            <th>${L("name")}</th><th>${L("phone")}</th><th>${L("password")}</th>
-            <th>${L("status")}</th><th>${L("score")}</th><th>${L("examDurationLabel")}</th><th></th>
-          </tr></thead>
-          <tbody id="cand-rows"></tbody>
-        </table>
-      </div>
+      <div class="cand-card-grid" id="cand-rows"></div>
     </div>
   `);
   toolbar.querySelector("#filter-status").value = filterStatus;
@@ -878,51 +877,58 @@ function renderCandidatesTab() {
   const rows = toolbar.querySelector("#cand-rows");
   visible.forEach((c) => {
     const att = state.attempts[c.id];
-    const tr = el(`
-      <tr>
-        <td>${escapeHtml(c.name)}</td>
-        <td>${escapeHtml(c.phone || "")}</td>
-        <td class="mono">${escapeHtml(c.code || "—")}</td>
-        <td>${statusLabel(c)}</td>
-        <td>${att ? `${att.score}/${att.totalPoints}` : "—"}</td>
-        <td>${Number.isFinite(att?.durationSec) ? fmtTime(att.durationSec) : "—"}</td>
-        <td class="row-actions"></td>
-      </tr>
+    const statusClass = c.blocked ? "blocked" : (STATUS_BADGE_CLASS[c.examStatus] || "not-started");
+    const card = el(`
+      <div class="cand-card">
+        <div class="cand-card-head">
+          <div class="cand-card-name">${escapeHtml(c.name)}</div>
+          <span class="status-badge ${statusClass}">${statusLabel(c)}</span>
+        </div>
+        <div class="cand-card-creds">
+          <div class="cred-row"><span class="cred-label">${L("phone")}</span><span class="cred-value mono">${escapeHtml(c.phone || "—")}</span></div>
+          <div class="cred-row"><span class="cred-label">${L("password")}</span><span class="cred-value mono">${escapeHtml(c.code || "—")}</span></div>
+        </div>
+        <div class="stat-row">
+          <div class="stat-box"><div class="stat-num">${att ? `${att.score}/${att.totalPoints}` : "—"}</div><div class="stat-lbl">${L("score")}</div></div>
+          <div class="stat-box"><div class="stat-num">${Number.isFinite(att?.durationSec) ? fmtTime(att.durationSec) : "—"}</div><div class="stat-lbl">${L("examDurationLabel")}</div></div>
+        </div>
+        <div class="cand-card-actions"></div>
+      </div>
     `);
-    const actions = tr.querySelector(".row-actions");
+    const actions = card.querySelector(".cand-card-actions");
     if (c.deleted) {
       // Removed candidates only get restored — we never hard-delete the
       // Firestore profile anymore, since the underlying Auth login can't be
       // deleted from the client, and re-registering the same phone number
       // against a hard-deleted profile always fails with
       // auth/email-already-in-use. Restoring the same doc sidesteps that.
-      const restoreBtn = el(`<button class="link">${L("restore")}</button>`);
+      const restoreBtn = makeChip("♻️", L("restore"));
       restoreBtn.onclick = async () => {
         await updateDoc(doc(db, "users", c.id), { deleted: false });
         try { await unblacklistFingerprint(c); } catch (err) { console.warn("fingerprint unblock failed", err); }
       };
       actions.appendChild(restoreBtn);
       if (ADMIN_SERVER_URL && state.profile.role === "admin") actions.appendChild(makeHardDeleteBtn(c));
-      rows.appendChild(tr);
+      rows.appendChild(card);
       return;
     }
     if (["submitted", "graded"].includes(c.examStatus)) {
-      const btn = el(`<button class="link">${L("viewResult")}</button>`);
+      const btn = makeChip("👁️", L("viewResult"));
       btn.onclick = () => setState({ adminTab: "candidates", viewCandidate: c.id });
       actions.appendChild(btn);
     }
-    const devicesBtn = el(`<button class="link">${L("viewDevices")}</button>`);
+    const devicesBtn = makeChip("📱", L("viewDevices"));
     devicesBtn.onclick = () => setState({ adminTab: "candidates", viewCandidateDevices: c.id });
     actions.appendChild(devicesBtn);
-    const historyBtn = el(`<button class="link">${L("examHistory")}</button>`);
+    const historyBtn = makeChip("🗂️", L("examHistory"));
     historyBtn.onclick = () => setState({ adminTab: "candidates", viewCandidateHistory: c.id });
     actions.appendChild(historyBtn);
     if (state.profile.role === "admin" && c.examStatus && c.examStatus !== "not_started") {
-      const newExamBtn = el(`<button class="link warn">${L("newExam")}</button>`);
+      const newExamBtn = makeChip("🔄", L("newExam"), "warn");
       newExamBtn.onclick = () => resetCandidateExam(c);
       actions.appendChild(newExamBtn);
     }
-    const blockBtn = el(`<button class="link warn">${c.blocked ? L("unblock") : L("block")}</button>`);
+    const blockBtn = makeChip(c.blocked ? "✅" : "🚫", c.blocked ? L("unblock") : L("block"), "warn");
     blockBtn.onclick = async () => {
       const blocking = !c.blocked;
       await updateDoc(doc(db, "users", c.id), { blocked: blocking });
@@ -930,7 +936,7 @@ function renderCandidatesTab() {
     };
     actions.appendChild(blockBtn);
     if (state.profile.role === "admin") {
-      const delBtn = el(`<button class="link danger">${L("delete")}</button>`);
+      const delBtn = makeChip("🗑️", L("delete"), "danger");
       delBtn.onclick = async () => {
         if (!confirm(L("delete") + "?")) return;
         try { await blacklistFingerprint(c); } catch (err) { console.warn("fingerprint blacklist write failed", err); }
@@ -940,7 +946,7 @@ function renderCandidatesTab() {
       actions.appendChild(delBtn);
       if (ADMIN_SERVER_URL) actions.appendChild(makeHardDeleteBtn(c));
     }
-    rows.appendChild(tr);
+    rows.appendChild(card);
   });
   if (state.viewCandidate) {
     const c = state.candidates.find((x) => x.id === state.viewCandidate);

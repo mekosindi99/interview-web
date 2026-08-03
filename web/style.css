@@ -74,6 +74,37 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .total-score-line { display: flex; align-items: center; justify-content: space-between; font-size: 15px; padding-top: 10px; border-top: 1px solid var(--border); }
 .total-score-line b { font-size: 24px; color: var(--primary); }
 
+/* ---------- Candidate cards (replaces the old cramped table) ---------- */
+.cand-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; margin-top: 8px; }
+.cand-card {
+  background: var(--card); border: 1px solid var(--border); border-radius: 16px;
+  padding: 16px; display: flex; flex-direction: column; gap: 10px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.04); transition: box-shadow .15s, transform .15s;
+}
+.cand-card:hover { box-shadow: 0 6px 18px rgba(0,0,0,.08); transform: translateY(-1px); }
+.cand-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.cand-card-name { font-weight: 800; font-size: 16px; }
+.status-badge { font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 999px; white-space: nowrap; }
+.status-badge.not-started { background: #eef1f5; color: var(--muted); }
+.status-badge.in-progress { background: #e2ecff; color: #1d4ed8; }
+.status-badge.submitted { background: #fff3d6; color: #a06600; }
+.status-badge.graded { background: #e2f6ea; color: var(--ok); }
+.status-badge.blocked { background: #fdecea; color: var(--bad); }
+.cand-card-creds { background: var(--bg); border-radius: 10px; padding: 8px 12px; }
+.cand-card-creds .cred-row { padding: 3px 0; }
+.cand-card-actions { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 2px; }
+
+.action-chip {
+  display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px; font-size: 12px; font-weight: 700;
+  background: #eef1f5; color: var(--text); border-radius: 999px; border: none;
+}
+.action-chip-icon { font-size: 13px; line-height: 1; }
+.action-chip:hover { background: #e2e6ec; transform: translateY(-1px); }
+.action-chip.warn { background: #fff3d6; color: #8a5a00; }
+.action-chip.warn:hover { background: #ffe9b3; }
+.action-chip.danger { background: #fdecea; color: var(--bad); }
+.action-chip.danger:hover { background: #fad4d1; }
+
 .cred-card { max-width: 420px; margin: 0 auto 16px; }
 .cred-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; border-bottom: 1px dashed var(--border); }
 .cred-row:last-child { border-bottom: none; }
