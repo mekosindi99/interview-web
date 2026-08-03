@@ -1035,7 +1035,11 @@ function renderDashboardStats(visible) {
   if (scored.length) {
     const bucketLabels = ["0-20%", "21-40%", "41-60%", "61-80%", "81-100%"];
     const buckets = [0, 0, 0, 0, 0];
-    scored.forEach((c) => { buckets[Math.min(4, Math.floor(candidateScoreFraction(c) * 100 / 20))] += 1; });
+    // Explicit inclusive upper bounds instead of Math.floor(pct/20) — that
+    // put an exact 80% into the "81-100%" bucket (floor(80/20) = 4), one
+    // bucket higher than its own label said it should land in.
+    const bucketOf = (pct) => (pct <= 20 ? 0 : pct <= 40 ? 1 : pct <= 60 ? 2 : pct <= 80 ? 3 : 4);
+    scored.forEach((c) => { buckets[bucketOf(candidateScoreFraction(c) * 100)] += 1; });
     const max = Math.max(...buckets, 1);
     const chart = el(`<div class="score-chart"></div>`);
     buckets.forEach((count, i) => {
