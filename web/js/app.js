@@ -194,9 +194,40 @@ document.documentElement.lang = state.lang;
 document.documentElement.dir = DIR[state.lang];
 document.documentElement.dataset.theme = state.theme;
 
+// Online/offline for the admin's candidate list — there's no Realtime
+// Database in this project (Firestore only), so presence is a plain
+// heartbeat: while a candidate has the app open, their own client
+// periodically stamps lastActiveAt on their own users/{uid} doc (already
+// writable by them — see the diff-restricted candidate self-update rule in
+// firestore.rules, which only blocks role/blocked/deleted/score). The
+// admin side (isCandidateOnline below) just checks how stale that
+// timestamp is; there's no explicit "offline" write on tab close (not
+// reliably deliverable anyway) — going stale IS what going offline means.
+const PRESENCE_HEARTBEAT_MS = 25000;
+const PRESENCE_ONLINE_WINDOW_MS = PRESENCE_HEARTBEAT_MS * 2.5;
+let presenceHeartbeatInterval = null;
+function startPresenceHeartbeat(uid) {
+  stopPresenceHeartbeat();
+  const beat = () => updateDoc(doc(db, "users", uid), { lastActiveAt: serverTimestamp() }).catch(() => {});
+  beat();
+  presenceHeartbeatInterval = setInterval(beat, PRESENCE_HEARTBEAT_MS);
+}
+function stopPresenceHeartbeat() {
+  if (presenceHeartbeatInterval) { clearInterval(presenceHeartbeatInterval); presenceHeartbeatInterval = null; }
+}
+// Going offline is silent (nothing gets written when a tab just closes), so
+// staff's own screen needs to re-check "is this still recent enough?" on
+// its own clock too — otherwise a candidate who vanished would stay shown
+// as online forever, frozen at their last real heartbeat, since no new
+// Firestore event would ever arrive to trigger a re-render.
+setInterval(() => {
+  if ((state.profile?.role === "admin" || state.profile?.role === "coadmin") && state.adminTab === "candidates") render();
+}, PRESENCE_HEARTBEAT_MS);
+
 onAuthStateChanged(auth, async (user) => {
   stopStaffWatchers();
   stopSessionWatcher();
+  stopPresenceHeartbeat();
   if (!user) {
     setState({ user: null, profile: null, route: location.hash === "#admin-setup" ? "admin-setup" : "login" });
     return;
@@ -221,6 +252,7 @@ onAuthStateChanged(auth, async (user) => {
       updateDoc(doc(db, "users", user.uid), { deviceId }).catch(() => {});
     }
     logLoginDevice(user);
+    startPresenceHeartbeat(user.uid);
     // Single-session enforcement: claim a fresh session token on every
     // login, so a candidate can't have the exam open on two devices at
     // once (a friend answering on one while they sit the real exam on the
@@ -937,6 +969,16 @@ function statusLabel(c) {
   return L(EXAM_STATUS_KEY[c.examStatus] || "notStarted");
 }
 
+// A candidate counts as "online" if their heartbeat (see
+// startPresenceHeartbeat) landed within the last ~2 beats worth of time —
+// generous enough to not flicker offline on a single missed/slow beat over
+// a shaky connection, tight enough to go offline reasonably soon after a
+// tab actually closes.
+function isCandidateOnline(c) {
+  const seenAt = c.lastActiveAt?.seconds ? c.lastActiveAt.seconds * 1000 : null;
+  return !!seenAt && (Date.now() - seenAt) < PRESENCE_ONLINE_WINDOW_MS;
+}
+
 // Calls the optional admin-server to actually delete the Firebase Auth
 // login (not just the Firestore profile) — see server/README.md. Available
 // wherever a candidate row is shown, including already-hidden/removed ones,
@@ -1073,7 +1115,10 @@ function renderCandidatesTab() {
     const card = el(`
       <div class="cand-card">
         <div class="cand-card-head">
-          <div class="cand-card-name">${escapeHtml(c.name)}</div>
+          <div class="cand-card-name">
+            <span class="presence-dot ${isCandidateOnline(c) ? "online" : "offline"}" title="${isCandidateOnline(c) ? L("onlineNow") : L("offlineNow")}"></span>
+            ${escapeHtml(c.name)}
+          </div>
           <span class="status-badge ${statusClass}">${statusLabel(c)}</span>
         </div>
         <div class="cand-card-creds">
@@ -2709,6 +2754,8 @@ function renderLeaderboard() {
       `));
     });
     body.appendChild(tableWrap);
+  }).catch((err) => {
+    body.innerHTML = `<p class="err">${L("error")}: ${err.message}</p>`;
   });
   return wrap;
 }
