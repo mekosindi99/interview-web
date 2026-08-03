@@ -97,6 +97,14 @@ img, canvas, svg, video, audio { max-width: 100%; }
   padding: 20px; margin-bottom: 16px;
 }
 .center-card { max-width: 420px; margin: 40px auto; text-align: center; }
+/* Result screen: credentials/status/score cards used to each set their own
+   width/margin independently (cred-card: max-width 420 margin 0 auto 16px;
+   center-card: max-width 420 margin 40px auto) — same max-width on paper,
+   but the mismatched top margins and drifting nested-vs-direct-child
+   context made them read as different sizes. One shared wrapper now owns
+   the single 420px cap and consistent gap; the cards inside just fill it. */
+.result-shell { max-width: 420px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+.result-shell .card { margin: 0; box-shadow: 0 1px 3px rgba(0,0,0,.04); }
 .about-intro { display: flex; align-items: center; gap: 14px; }
 .about-intro-icon { font-size: 32px; }
 .about-intro h2 { margin: 0 0 4px; }

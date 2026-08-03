@@ -2768,11 +2768,13 @@ function renderResult() {
         <button id="material-btn-result" class="ghost">${L("readMaterial")}</button>
         <button id="leaderboard-btn" class="ghost">${L("leaderboardBtn")}</button>
       </div>
-      <div id="cred-card-host"></div>
-      <div class="card center-card" id="exam-meta"></div>
-      <div class="card center-card" id="result-summary">
-        <h2>${L("yourResult")}</h2>
-        <p>${L("loading")}</p>
+      <div class="result-shell">
+        <div id="cred-card-host"></div>
+        <div class="card center-card" id="exam-meta"></div>
+        <div class="card center-card" id="result-summary">
+          <h2>${L("yourResult")}</h2>
+          <p>${L("loading")}</p>
+        </div>
       </div>
       <div id="result-review"></div>
     </div>
