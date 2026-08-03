@@ -161,6 +161,7 @@ document.documentElement.dir = DIR[state.lang];
 
 onAuthStateChanged(auth, async (user) => {
   stopStaffWatchers();
+  stopSessionWatcher();
   if (!user) {
     setState({ user: null, profile: null, route: location.hash === "#admin-setup" ? "admin-setup" : "login" });
     return;
@@ -185,6 +186,24 @@ onAuthStateChanged(auth, async (user) => {
       updateDoc(doc(db, "users", user.uid), { deviceId }).catch(() => {});
     }
     logLoginDevice(user);
+    // Single-session enforcement: claim a fresh session token on every
+    // login, so a candidate can't have the exam open on two devices at
+    // once (a friend answering on one while they sit the real exam on the
+    // other) — logging in anywhere signs out everywhere else, regardless
+    // of network, which is what actually stops that trick. Deliberately
+    // NOT IP-based: an IP is shared by a whole household/office (NAT), so
+    // blocking one would lock out other genuine candidates on the same
+    // network — this bit us once already (see isFingerprintBlocked above).
+    mySessionToken = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    try {
+      await updateDoc(doc(db, "users", user.uid), { activeSessionId: mySessionToken });
+      watchSession(user.uid);
+    } catch (err) {
+      // If claiming the session failed (network hiccup), don't watch at
+      // all — comparing against a stale activeSessionId we never actually
+      // wrote would kick this device out immediately for no reason.
+      console.warn("session claim failed, skipping session enforcement", err);
+    }
   }
   setState({
     user,
@@ -243,6 +262,25 @@ function stopStaffWatchers() {
   if (unsubQuestions) { unsubQuestions(); unsubQuestions = null; }
   if (unsubAttempts) { unsubAttempts(); unsubAttempts = null; }
   if (unsubExamConfig) { unsubExamConfig(); unsubExamConfig = null; }
+}
+
+// This device/tab's claimed session token, and the listener that detects
+// another device claiming a newer one (see onAuthStateChanged above).
+let mySessionToken = null;
+let unsubSession = null;
+function watchSession(uid) {
+  if (unsubSession) return;
+  unsubSession = onSnapshot(doc(db, "users", uid), (snap) => {
+    const data = snap.data();
+    if (data && data.activeSessionId && mySessionToken && data.activeSessionId !== mySessionToken) {
+      stopSessionWatcher();
+      signOut(auth);
+      setState({ user: null, profile: null, route: "login", kickedBySession: true });
+    }
+  });
+}
+function stopSessionWatcher() {
+  if (unsubSession) { unsubSession(); unsubSession = null; }
 }
 
 let unsubExamConfig = null;
@@ -487,6 +525,7 @@ function renderLogin() {
       <h1>${L("appName")}</h1>
       <h2>${L("loginTitle")}</h2>
       ${state.loginBlocked ? `<div class="err">${L("loginBlockedMsg")}</div>` : ""}
+      ${state.kickedBySession ? `<div class="err">${L("kickedBySessionMsg")}</div>` : ""}
       <form id="login-form">
         <label>${L("email")} / ${L("phone")}
           <input required name="identifier" autocomplete="username" placeholder="you@email.com — or — 07701234567" />
