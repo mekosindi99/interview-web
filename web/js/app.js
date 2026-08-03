@@ -2839,7 +2839,9 @@ async function loadMaterialAndRender(body, root) {
   // instant instead of waiting on a fresh ~1MB fetch each time.
   function prefetchNeighbours(n) {
     if (mode !== "images") return;
-    [n + 1, n - 1].forEach((p) => {
+    // Biased toward reading forward (2 pages ahead) since that's the
+    // common direction; still warms the one page back for re-reading.
+    [n + 1, n + 2, n - 1].forEach((p) => {
       if (p >= 1 && p <= materialPageCount && !imageUrlCache[p]) getImageUrl(p).catch(() => {});
     });
   }

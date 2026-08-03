@@ -9,6 +9,7 @@ import admin from "firebase-admin";
 import multer from "multer";
 import { google } from "googleapis";
 import { Readable } from "stream";
+import sharp from "sharp";
 
 const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
 if (!serviceAccountJson) {
@@ -232,9 +233,22 @@ app.post("/uploads/material-images", requireAdmin, upload.array("files", 200), a
   try {
     if (!req.files?.length) return res.status(400).json({ error: "no files" });
     const results = await Promise.all(req.files.map(async (file, i) => {
+      // Phone-camera/scanner pages routinely come in at 3000-4000px wide and
+      // several MB each — that raw size, not the network hop itself, was the
+      // actual reason the viewer felt slow to open. Re-encoding down to a
+      // width that's already more than any screen needs (a phone at 3x
+      // pixel density showing it full-width is still under 1300px of real
+      // pixels) cuts most files to a fraction of their original size with no
+      // visible quality loss when read on-screen, and every future open of
+      // this page benefits, not just this one.
+      const resized = await sharp(file.buffer)
+        .rotate() // apply the file's own EXIF orientation, then drop it, so it can't be re-applied twice
+        .resize({ width: 1600, withoutEnlargement: true })
+        .jpeg({ quality: 82 })
+        .toBuffer();
       const fileId = await uploadToDrive({
         name: `material-page__${String(i + 1).padStart(3, "0")}__${file.originalname}`,
-        mimeType: file.mimetype || "image/jpeg", buffer: file.buffer,
+        mimeType: "image/jpeg", buffer: resized,
       });
       return { fileId };
     }));
@@ -314,6 +328,7 @@ app.get("/material/:fileId", requireSignedIn, async (req, res) => {
     );
     res.setHeader("Content-Type", "application/pdf");
     if (meta.data.size) res.setHeader("Content-Length", meta.data.size);
+    res.setHeader("Cache-Control", "private, max-age=31536000, immutable");
     driveRes.data.pipe(res);
   } catch (err) {
     console.error("material proxy failed", err);
@@ -326,13 +341,21 @@ app.get("/material/:fileId", requireSignedIn, async (req, res) => {
 // same as the PDF and everything else here.
 app.get("/material-image/:fileId", requireSignedIn, async (req, res) => {
   try {
-    const meta = await drive.files.get({ fileId: req.params.fileId, fields: "size,mimeType" });
+    // No metadata pre-fetch here (unlike the PDF proxy above) — every page
+    // image is re-encoded to JPEG at upload time (see /uploads/material-images),
+    // so the type is already known and this saves a whole extra Drive API
+    // round-trip per page, on top of the smaller file itself.
     const driveRes = await drive.files.get(
       { fileId: req.params.fileId, alt: "media" },
       { responseType: "stream" }
     );
-    res.setHeader("Content-Type", meta.data.mimeType || "image/jpeg");
-    if (meta.data.size) res.setHeader("Content-Length", meta.data.size);
+    res.setHeader("Content-Type", "image/jpeg");
+    // The image behind a given fileId never changes (replacing a page
+    // uploads a new fileId instead) — safe for the browser to cache it
+    // indefinitely instead of re-fetching through this proxy every time the
+    // material is reopened. "private" since it's behind auth, not meant to
+    // sit in a shared/CDN cache.
+    res.setHeader("Cache-Control", "private, max-age=31536000, immutable");
     driveRes.data.pipe(res);
   } catch (err) {
     console.error("material image proxy failed", err);
