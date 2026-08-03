@@ -210,6 +210,11 @@ app.post("/leaderboard/sync/:uid", requireAdmin, async (req, res) => {
       phoneMasked: maskPhone(userSnap.data().phone),
       sectionScores: attempt.sectionScores || {},
       score: attempt.score ?? 0,
+      // How long the candidate took to finish, in seconds — the tie-break
+      // when two candidates land on the same score (faster finish ranks
+      // higher). Recorded by the client at submit time (submitExam in
+      // app.js), null if it somehow wasn't captured.
+      durationSec: attempt.durationSec ?? null,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
     res.json({ ok: true, published: true });

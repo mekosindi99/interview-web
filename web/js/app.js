@@ -329,6 +329,10 @@ function mergeExamConfig(data) {
     selectionMode: data?.selectionMode === "manual" ? "manual" : "random",
     manualQuestionIds: Array.isArray(data?.manualQuestionIds) ? data.manualQuestionIds : [],
     fontFamily: FONT_OPTIONS[data?.fontFamily] ? data.fontFamily : "cairo",
+    // How many of the top-ranked candidates on the public leaderboard are
+    // marked "accepted" — 0 means the admin hasn't set an admission count
+    // yet, so nobody is marked.
+    acceptCount: Number.isInteger(data?.acceptCount) && data.acceptCount >= 0 ? data.acceptCount : 0,
   };
 }
 function watchExamConfig() {
@@ -615,6 +619,7 @@ function renderAdminShell() {
         <button data-tab="questions" class="${tab === "questions" ? "active" : ""}">${L("questionsBank")}</button>
         <button data-tab="material" class="${tab === "material" ? "active" : ""}">${L("materialTab")}</button>
         ${isAdmin ? `<button data-tab="settings" class="${tab === "settings" ? "active" : ""}">${L("examSettings")}</button>` : ""}
+        ${isAdmin ? `<button data-tab="admission" class="${tab === "admission" ? "active" : ""}">${L("admissionTab")}</button>` : ""}
         ${isAdmin ? `<button data-tab="coadmins" class="${tab === "coadmins" ? "active" : ""}">${L("coadmins")}</button>` : ""}
         ${isAdmin ? `<button data-tab="about" class="${tab === "about" ? "active" : ""}">${L("aboutTab")}</button>` : ""}
       </nav>
@@ -629,6 +634,7 @@ function renderAdminShell() {
   else if (tab === "questions") body.appendChild(renderQuestionsTab());
   else if (tab === "material") body.appendChild(renderMaterialAdminTab());
   else if (tab === "settings" && isAdmin) body.appendChild(renderExamSettingsTab());
+  else if (tab === "admission" && isAdmin) body.appendChild(renderAdmissionTab());
   else if (tab === "coadmins" && isAdmin) body.appendChild(renderCoadminsTab());
   else if (tab === "about" && isAdmin) body.appendChild(renderAboutTab());
   return wrap;
@@ -1461,6 +1467,32 @@ function renderNewCandidateForm() {
       }
     }
   };
+  return wrap;
+}
+
+// Admin-only: how many of the top-ranked candidates on the public
+// leaderboard get marked "accepted" — a plain count, not tied to any
+// particular candidate, so it stays correct automatically as scores change.
+function renderAdmissionTab() {
+  const wrap = el(`<div></div>`);
+  const form = el(`
+    <form id="admission-form" class="card">
+      <h3>${L("admissionTab")}</h3>
+      <p class="hint">${L("admissionHint")}</p>
+      <label>${L("acceptCountLabel")}<input type="number" name="acceptCount" min="0" value="${state.examConfig.acceptCount}" /></label>
+      <div class="err" id="admission-msg"></div>
+      <button type="submit" class="primary">${L("saveSettings")}</button>
+    </form>
+  `);
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const acceptCount = Math.max(0, Number(new FormData(e.target).get("acceptCount")) || 0);
+    await setDoc(doc(db, "settings", "examConfig"), { acceptCount }, { merge: true });
+    state.examConfig = { ...state.examConfig, acceptCount };
+    const msg = form.querySelector("#admission-msg");
+    msg.textContent = L("settingsSaved"); msg.classList.remove("err"); msg.classList.add("notice");
+  };
+  wrap.appendChild(form);
   return wrap;
 }
 
@@ -2626,11 +2658,24 @@ function renderLeaderboard() {
   wrap.querySelector("#leaderboard-back-btn").onclick = () => setState({ route: "result" });
 
   const body = wrap.querySelector("#leaderboard-body");
-  getDocs(query(collection(db, "leaderboard"), orderBy("score", "desc"))).then((snap) => {
+  getDocs(collection(db, "leaderboard")).then((snap) => {
     body.innerHTML = "";
     if (snap.empty) { body.innerHTML = `<p>${L("leaderboardEmpty")}</p>`; return; }
+    const rows = [];
+    snap.forEach((d) => rows.push({ id: d.id, ...d.data() }));
+    // Rank by score first; a tie goes to whoever finished faster
+    // (durationSec ascending) — sorted here in JS rather than via a
+    // Firestore compound orderBy so this doesn't depend on a composite
+    // index existing. Missing duration sorts last among its score group,
+    // never ahead of a candidate who does have a recorded time.
+    rows.sort((a, b) => {
+      if ((b.score ?? 0) !== (a.score ?? 0)) return (b.score ?? 0) - (a.score ?? 0);
+      const ad = a.durationSec ?? Infinity, bd = b.durationSec ?? Infinity;
+      return ad - bd;
+    });
+    const acceptCount = state.examConfig.acceptCount || 0;
     const usedSections = new Set();
-    snap.forEach((d) => Object.keys(d.data().sectionScores || {}).forEach((s) => usedSections.add(s)));
+    rows.forEach((row) => Object.keys(row.sectionScores || {}).forEach((s) => usedSections.add(s)));
     const sectionCols = SECTIONS.filter((s) => usedSections.has(s));
     const tableWrap = el(`
       <div class="table-scroll">
@@ -2638,19 +2683,19 @@ function renderLeaderboard() {
           <thead><tr>
             <th>#</th><th>${L("name")}</th><th>${L("phone")}</th>
             ${sectionCols.map((s) => `<th>${L(s)}</th>`).join("")}
-            <th>${L("total")}</th>
+            <th>${L("total")}</th><th>${L("timeTaken")}</th>
+            ${acceptCount ? `<th>${L("admissionStatus")}</th>` : ""}
           </tr></thead>
           <tbody></tbody>
         </table>
       </div>
     `);
     const tbody = tableWrap.querySelector("tbody");
-    let rank = 0;
-    snap.forEach((d) => {
-      rank++;
-      const row = d.data();
-      const isMe = d.id === state.profile.id;
+    rows.forEach((row, i) => {
+      const rank = i + 1;
+      const isMe = row.id === state.profile.id;
       const ss = row.sectionScores || {};
+      const accepted = acceptCount > 0 && rank <= acceptCount;
       tbody.appendChild(el(`
         <tr ${isMe ? 'style="font-weight:800"' : ""}>
           <td>${rank}</td>
@@ -2658,6 +2703,8 @@ function renderLeaderboard() {
           <td class="mono">${escapeHtml(row.phoneMasked || "")}</td>
           ${sectionCols.map((s) => `<td>${ss[s] ? `${ss[s].score}/${ss[s].total}` : "—"}</td>`).join("")}
           <td><b>${row.score ?? 0}</b></td>
+          <td class="mono">${row.durationSec != null ? fmtTime(row.durationSec) : "—"}</td>
+          ${acceptCount ? `<td>${accepted ? `<span class="status-badge graded">${L("admissionAccepted")}</span>` : ""}</td>` : ""}
         </tr>
       `));
     });
