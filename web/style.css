@@ -273,8 +273,12 @@ table.grid .mono { font-family: "Courier New", monospace; letter-spacing: .5px; 
   color: #14161c;
   box-shadow: inset 0 2px 0 0 var(--me-highlight), inset 0 -2px 0 0 var(--me-highlight);
 }
-.leaderboard-row-me td:first-child { border-radius: 0 12px 12px 0; animation: leaderboard-glow-cap 1.6s ease-in-out infinite; }
-.leaderboard-row-me td:last-child { border-radius: 12px 0 0 12px; animation: leaderboard-glow-cap 1.6s ease-in-out infinite; }
+/* The table itself is dir="ltr" (see renderLeaderboard) so its columns
+   read left-to-right, which swapped which end cell is physically on which
+   side — first-child (the # column) is now the LEFT end, so it gets the
+   left-side rounding instead of the right. */
+.leaderboard-row-me td:first-child { border-radius: 12px 0 0 12px; animation: leaderboard-glow-cap 1.6s ease-in-out infinite; }
+.leaderboard-row-me td:last-child { border-radius: 0 12px 12px 0; animation: leaderboard-glow-cap 1.6s ease-in-out infinite; }
 .leaderboard-row-me td.leaderboard-name .tag { background: var(--me-highlight); color: #fff; font-weight: 700; }
 /* Both end caps share one keyframe now — the earlier version also drew an
    inset side line on each end cell's INNER edge (a guessed offset sign

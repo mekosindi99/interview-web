@@ -2778,7 +2778,7 @@ function renderLeaderboard() {
     const RANK_MEDAL = { 1: "🥇", 2: "🥈", 3: "🥉" };
     const tableWrap = el(`
       <div class="table-scroll">
-        <table class="grid leaderboard-table">
+        <table class="grid leaderboard-table" dir="ltr">
           <thead><tr>
             <th>#</th><th>${L("name")}</th><th>${L("phone")}</th>
             ${sectionCols.map((s) => `<th>${L(s)}</th>`).join("")}
