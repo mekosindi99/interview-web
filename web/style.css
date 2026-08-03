@@ -260,21 +260,29 @@ table.grid .mono { font-family: "Courier New", monospace; letter-spacing: .5px; 
 .leaderboard-total { font-size: 17px; font-weight: 800; color: var(--primary); }
 .leaderboard-table tbody tr:nth-child(even) { background: var(--bg); }
 .leaderboard-row-top { background: color-mix(in srgb, var(--primary) 6%, transparent) !important; }
-/* Borders on every cell of the row kept rendering as separate boxes per
-   column instead of one shape (border-radius is unreliable on collapsed
-   table borders across browsers) — dropped entirely. The highlight now
-   lives on just the name cell instead: a solid pill with its own glow,
-   which is the one thing anyone actually needs to spot "this is my row". */
-.leaderboard-row-me td.leaderboard-name {
-  background: var(--me-highlight) !important;
-  color: #fff;
-  border-radius: 999px;
-  animation: leaderboard-glow 1.6s ease-in-out infinite;
+/* Using real `border` here (instead of box-shadow) is what made the earlier
+   attempt render as separate boxes per column — border-radius has no
+   effect on borders once a table uses border-collapse (spec behavior, not
+   a bug), so every cell's straight corner showed through. box-shadow isn't
+   subject to that rule and still respects border-radius normally, so the
+   whole row's top/bottom line (identical position in every cell, so they
+   coincide instead of stacking) plus the two rounded, glowing end caps are
+   built entirely out of box-shadow layers instead. */
+.leaderboard-row-me td {
+  background: #fff !important;
+  color: #14161c;
+  box-shadow: inset 0 2px 0 0 var(--me-highlight), inset 0 -2px 0 0 var(--me-highlight);
 }
-.leaderboard-row-me td.leaderboard-name .tag { background: rgba(255,255,255,.25); color: #fff; font-weight: 700; }
-@keyframes leaderboard-glow {
-  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--me-highlight) 45%, transparent); }
-  50% { box-shadow: 0 0 12px 3px color-mix(in srgb, var(--me-highlight) 55%, transparent); }
+.leaderboard-row-me td:first-child { border-radius: 0 12px 12px 0; animation: leaderboard-glow-first 1.6s ease-in-out infinite; }
+.leaderboard-row-me td:last-child { border-radius: 12px 0 0 12px; animation: leaderboard-glow-last 1.6s ease-in-out infinite; }
+.leaderboard-row-me td.leaderboard-name .tag { background: var(--me-highlight); color: #fff; font-weight: 700; }
+@keyframes leaderboard-glow-first {
+  0%, 100% { box-shadow: inset 0 2px 0 0 var(--me-highlight), inset 0 -2px 0 0 var(--me-highlight), inset -2px 0 0 0 var(--me-highlight), 0 0 0 0 color-mix(in srgb, var(--me-highlight) 45%, transparent); }
+  50% { box-shadow: inset 0 2px 0 0 var(--me-highlight), inset 0 -2px 0 0 var(--me-highlight), inset -2px 0 0 0 var(--me-highlight), 0 0 12px 3px color-mix(in srgb, var(--me-highlight) 55%, transparent); }
+}
+@keyframes leaderboard-glow-last {
+  0%, 100% { box-shadow: inset 0 2px 0 0 var(--me-highlight), inset 0 -2px 0 0 var(--me-highlight), inset 2px 0 0 0 var(--me-highlight), 0 0 0 0 color-mix(in srgb, var(--me-highlight) 45%, transparent); }
+  50% { box-shadow: inset 0 2px 0 0 var(--me-highlight), inset 0 -2px 0 0 var(--me-highlight), inset 2px 0 0 0 var(--me-highlight), 0 0 12px 3px color-mix(in srgb, var(--me-highlight) 55%, transparent); }
 }
 
 .q-list { display: flex; flex-direction: column; gap: 10px; }
