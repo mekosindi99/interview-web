@@ -2997,8 +2997,11 @@ async function loadMaterialAndRender(body, root) {
     await renderPage(materialCurrentPage);
     saveMaterialProgress();
   };
-  // 1 = fit-to-width, so allowing below that would only add empty margins.
-  const MIN_ZOOM = 1, MAX_ZOOM = 4;
+  // 1 = fit-to-width. Below that just adds empty side margins rather than
+  // clipping anything, which is exactly what someone wants when they hit
+  // "-" past 100% to see a fuller page at once (e.g. checking layout,
+  // comparing two pages' worth of context) — so it's allowed down to 0.5.
+  const MIN_ZOOM = 0.5, MAX_ZOOM = 4;
   zoomInBtn.onclick = () => { materialZoom = Math.min(MAX_ZOOM, materialZoom + 0.25); renderPage(materialCurrentPage); };
   zoomOutBtn.onclick = () => { materialZoom = Math.max(MIN_ZOOM, materialZoom - 0.25); renderPage(materialCurrentPage); };
   // Re-fit on rotate/resize, since "100%" is defined by the viewer's width.
@@ -3045,7 +3048,7 @@ async function loadMaterialAndRender(body, root) {
     if (e.touches.length > 0 || e.changedTouches.length !== 1) return;
     const now = Date.now();
     if (now - lastTapAt < 300) {
-      materialZoom = materialZoom > MIN_ZOOM ? MIN_ZOOM : 2;
+      materialZoom = materialZoom > 1 ? 1 : 2; // toggle fit-to-width <-> 2x, not the MIN_ZOOM floor
       renderPage(materialCurrentPage);
     }
     lastTapAt = now;
