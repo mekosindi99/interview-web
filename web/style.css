@@ -260,34 +260,18 @@ table.grid .mono { font-family: "Courier New", monospace; letter-spacing: .5px; 
 .leaderboard-total { font-size: 17px; font-weight: 800; color: var(--primary); }
 .leaderboard-table tbody tr:nth-child(even) { background: var(--bg); }
 .leaderboard-row-top { background: color-mix(in srgb, var(--primary) 6%, transparent) !important; }
-/* A distinct color from the top-3 pink tint (and from the "مقبول" green),
-   so "which row is mine" reads instantly even when it's also a top-3 row —
-   plus a pulsing glow, since a plain outline was too easy to miss. Applied
-   per-cell (not on the <tr> itself) because box-shadow on a table row
-   doesn't render reliably under border-collapse. */
-/* One continuous pill around the whole row, not a separate box per cell:
-   a shared top/bottom border (cells touch, so it reads as one line across
-   all of them) with rounding only on the row's two outer corners, and a
-   glow that isn't inset so it bleeds outward across the cell seams instead
-   of stopping at each one. */
-.leaderboard-row-me td {
-  background: color-mix(in srgb, var(--me-highlight) 16%, var(--card)) !important;
-  border-top: 2px solid var(--me-highlight) !important;
-  border-bottom: 2px solid var(--me-highlight) !important;
-  /* No walls between the columns inside this row — only the outer pill
-     (top/bottom above, and the two outer-edge borders below) should show. */
-  border-inline-start: none;
-  border-inline-end: none;
+/* Borders on every cell of the row kept rendering as separate boxes per
+   column instead of one shape (border-radius is unreliable on collapsed
+   table borders across browsers) — dropped entirely. The highlight now
+   lives on just the name cell instead: a solid pill with its own glow,
+   which is the one thing anyone actually needs to spot "this is my row". */
+.leaderboard-row-me td.leaderboard-name {
+  background: var(--me-highlight) !important;
+  color: #fff;
+  border-radius: 999px;
+  animation: leaderboard-glow 1.6s ease-in-out infinite;
 }
-/* The glow animation used to run on every <td> independently — at each
-   internal seam between two cells, both cells' blurred shadows overlapped
-   and added up, so it visibly read as two glows layered on top of each
-   other instead of one. Now it only plays on the row's two end caps (where
-   the rounding already is); the blur bleeds inward from each end, and the
-   plain static border above is what marks the row the rest of the way. */
-.leaderboard-row-me td:first-child { border-radius: 0 12px 12px 0; border-inline-end: 2px solid var(--me-highlight); animation: leaderboard-glow 1.6s ease-in-out infinite; }
-.leaderboard-row-me td:last-child { border-radius: 12px 0 0 12px; border-inline-start: 2px solid var(--me-highlight); animation: leaderboard-glow 1.6s ease-in-out infinite; }
-.leaderboard-row-me td.leaderboard-name .tag { background: var(--me-highlight); color: #fff; font-weight: 700; }
+.leaderboard-row-me td.leaderboard-name .tag { background: rgba(255,255,255,.25); color: #fff; font-weight: 700; }
 @keyframes leaderboard-glow {
   0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--me-highlight) 45%, transparent); }
   50% { box-shadow: 0 0 12px 3px color-mix(in srgb, var(--me-highlight) 55%, transparent); }
