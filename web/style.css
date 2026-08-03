@@ -225,12 +225,53 @@ table.grid .mono { font-family: "Courier New", monospace; letter-spacing: .5px; 
 .material-toolbar {
   display: flex; align-items: center; justify-content: center; gap: 16px; margin-bottom: 10px;
 }
-.pdf-canvas-wrap { overflow: auto; max-height: 78vh; touch-action: none; transition: filter .2s; }
+
+/* Full-viewport reader. Fixed + dvh so it fills the real screen on phones
+   (and isn't constrained by the app's max-width card layout, which also
+   made "desktop site" mode render a tiny page). */
+.material-fullscreen {
+  position: fixed; inset: 0; z-index: 300; background: var(--bg);
+  display: flex; flex-direction: column; height: 100vh; height: 100dvh;
+}
+.material-topbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 8px 12px; background: var(--card); border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.material-zoom { display: flex; align-items: center; gap: 6px; }
+.material-zoom button { padding: 6px 14px; font-size: 16px; line-height: 1; }
+#zoom-label { min-width: 48px; text-align: center; color: var(--muted); font-size: 13px; }
+/* min-height:0 lets this flex child actually shrink so its own scrollbar works. */
+.material-viewport { flex: 1; position: relative; min-height: 0; }
+.material-loading { text-align: center; padding: 40px 16px; color: var(--muted); }
+
+.page-nav-btn {
+  position: absolute; top: 50%; transform: translateY(-50%); z-index: 5;
+  width: 40px; height: 72px; padding: 0; font-size: 26px; line-height: 1;
+  background: rgba(255,255,255,.85); border: 1px solid var(--border);
+  box-shadow: 0 2px 8px rgba(0,0,0,.12); color: var(--text);
+}
+.page-nav-btn:hover { background: #fff; }
+.page-nav-btn.prev { inset-inline-start: 8px; }
+.page-nav-btn.next { inset-inline-end: 8px; }
+.page-nav-btn:disabled { opacity: 0; pointer-events: none; }
+
+.page-spinner {
+  position: absolute; top: 50%; left: 50%; margin: -18px 0 0 -18px; z-index: 6;
+  width: 36px; height: 36px; border-radius: 50%;
+  border: 3px solid var(--border); border-top-color: var(--primary);
+  animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* display:flex + margin:auto on the child (not text-align/justify-content:
+   center) — centering an overflowing scroll container any other way clips
+   the far edge once the zoomed page is wider/taller than the viewport. */
+.pdf-canvas-wrap { position: absolute; inset: 0; overflow: auto; touch-action: none; transition: filter .2s; display: flex; padding: 8px; }
 /* The page (canvas or img) and the watermark overlay share this box, so the
    overlay always covers exactly the rendered page at any zoom level. */
 /* overflow:hidden clips the watermark overlay, which is rotated and scaled
    up past the page edges so its tiling reaches the corners. */
-.page-stage { position: relative; display: inline-block; line-height: 0; overflow: hidden; border-radius: 8px; }
+.page-stage { position: relative; display: inline-block; line-height: 0; overflow: hidden; border-radius: 8px; margin: auto; flex-shrink: 0; }
 .page-stage canvas,
 .page-stage img { display: block; max-width: none; border: 1px solid var(--border); border-radius: 8px; }
 .wm-overlay {

@@ -2345,20 +2345,32 @@ function runMaterialCleanups() {
 }
 
 function renderMaterialViewer() {
+  // Fixed full-viewport overlay rather than a card inside the normal page
+  // flow: the reader needs the whole screen (a max-width card left most of
+  // the screen empty and shrank the page, which was especially bad in the
+  // browser's "desktop site" mode where the viewport is ~980px wide but the
+  // physical screen is a phone).
   const wrap = el(`
-    <div class="shell">
-      <header class="topbar topbar-timer-only">
+    <div class="material-fullscreen">
+      <div class="material-topbar">
         <button id="back-btn" class="ghost">${L("backToExam")}</button>
-      </header>
-      <div class="card center-card" id="material-body">${L("loading")}</div>
+        <div class="material-zoom">
+          <button id="zoom-out" type="button">−</button>
+          <span id="zoom-label"></span>
+          <button id="zoom-in" type="button">+</button>
+        </div>
+      </div>
+      <div class="material-viewport" id="material-body">
+        <p class="material-loading">${L("loading")}</p>
+      </div>
     </div>
   `);
   wrap.querySelector("#back-btn").onclick = () => { stopMaterialTracking(); setState({ route: "exam" }); };
-  loadMaterialAndRender(wrap.querySelector("#material-body"));
+  loadMaterialAndRender(wrap.querySelector("#material-body"), wrap);
   return wrap;
 }
 
-async function loadMaterialAndRender(body) {
+async function loadMaterialAndRender(body, root) {
   // Safety net in case the viewer is re-entered without the back button
   // (which is what normally triggers stopMaterialTracking).
   runMaterialCleanups();
@@ -2382,17 +2394,6 @@ async function loadMaterialAndRender(body) {
   if (!mode) { body.innerHTML = `<p>${L("noMaterial")}</p>`; return; }
 
   body.innerHTML = `
-    <div class="material-toolbar">
-      <button id="prev-page">${L("prevPage")}</button>
-      <span id="page-label"></span>
-      <button id="next-page">${L("nextPage")}</button>
-    </div>
-    <div class="material-toolbar">
-      <button id="zoom-out" type="button">−</button>
-      <span id="zoom-label"></span>
-      <button id="zoom-in" type="button">+</button>
-    </div>
-    <p class="hint" style="text-align:center">${L("noScreenshotHint")}</p>
     <div class="pdf-canvas-wrap" id="pdf-canvas-wrap">
       <div class="page-stage" id="page-stage">
         <canvas id="pdf-canvas"></canvas>
@@ -2400,13 +2401,17 @@ async function loadMaterialAndRender(body) {
         <div class="wm-overlay" id="wm-overlay"></div>
       </div>
     </div>
+    <button class="page-nav-btn prev" id="prev-page" aria-label="${L("prevPage")}">‹</button>
+    <button class="page-nav-btn next" id="next-page" aria-label="${L("nextPage")}">›</button>
+    <div class="page-spinner" id="page-spinner" hidden></div>
   `;
   const prevBtn = body.querySelector("#prev-page");
   const nextBtn = body.querySelector("#next-page");
-  const label = body.querySelector("#page-label");
-  const zoomOutBtn = body.querySelector("#zoom-out");
-  const zoomInBtn = body.querySelector("#zoom-in");
-  const zoomLabel = body.querySelector("#zoom-label");
+  const spinner = body.querySelector("#page-spinner");
+  // Zoom controls live in the persistent top bar, outside this container.
+  const zoomOutBtn = root.querySelector("#zoom-out");
+  const zoomInBtn = root.querySelector("#zoom-in");
+  const zoomLabel = root.querySelector("#zoom-label");
   const canvasWrap = body.querySelector("#pdf-canvas-wrap");
   const stage = body.querySelector("#page-stage");
   const canvas = body.querySelector("#pdf-canvas");
@@ -2495,12 +2500,14 @@ async function loadMaterialAndRender(body) {
   materialOpenedAt = Date.now();
   materialPageStartTs = Date.now();
 
-  const sessionRef = await addDoc(collection(db, "materialSessions"), {
+  // Deliberately not awaited: the reading-session record is bookkeeping, and
+  // blocking the first page render on a Firestore round-trip just made the
+  // viewer feel slow to open. saveMaterialProgress no-ops until the id lands.
+  addDoc(collection(db, "materialSessions"), {
     uid: state.profile.id, name: state.profile.name || "",
     openedAt: serverTimestamp(), lastActiveAt: serverTimestamp(),
     pages: {}, maxPage: 1, pageCount: materialPageCount, durationSec: 0,
-  });
-  materialSessionId = sessionRef.id;
+  }).then((ref) => { materialSessionId = ref.id; }).catch(() => {});
 
   // Watermark: tiled, rotated, faint candidate name+phone laid over the page
   // as a CSS overlay rather than painted into the canvas. Keeping it out of
@@ -2534,34 +2541,53 @@ async function loadMaterialAndRender(body) {
 
   // Width available for a page at 100% zoom — "100%" means fit-to-width,
   // which is what makes sense on a phone, instead of an arbitrary fixed scale.
-  const availWidth = () => Math.max(200, canvasWrap.clientWidth || 320);
+  // Subtracts the wrap's own padding so a fitted page doesn't overflow it.
+  const availWidth = () => {
+    const cs = getComputedStyle(canvasWrap);
+    const pad = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
+    return Math.max(200, (canvasWrap.clientWidth || 320) - pad);
+  };
+
+  // Warms the next/previous pages in the background so page turns are
+  // instant instead of waiting on a fresh ~1MB fetch each time.
+  function prefetchNeighbours(n) {
+    if (mode !== "images") return;
+    [n + 1, n - 1].forEach((p) => {
+      if (p >= 1 && p <= materialPageCount && !imageUrlCache[p]) getImageUrl(p).catch(() => {});
+    });
+  }
 
   async function renderPage(n) {
-    if (mode === "pdf") {
-      const page = await materialPdfDoc.getPage(n);
-      const unscaled = page.getViewport({ scale: 1 });
-      const cssScale = (availWidth() / unscaled.width) * materialZoom;
-      // Render the bitmap at the device's real pixel density (capped at 3 so
-      // huge pages don't blow up memory), then size it back down in CSS.
-      // Without this the canvas is rendered at 1x and looks blurry on every
-      // modern phone screen (which are 2x-3x).
-      const dpr = Math.min(window.devicePixelRatio || 1, 3);
-      const viewport = page.getViewport({ scale: cssScale * dpr });
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
-      canvas.style.width = `${viewport.width / dpr}px`;
-      canvas.style.height = `${viewport.height / dpr}px`;
-      await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
-    } else {
-      const url = await getImageUrl(n);
-      if (pageImg.src !== url) pageImg.src = url;
-      pageImg.style.width = `${availWidth() * materialZoom}px`;
-      pageImg.style.height = "auto";
+    spinner.hidden = false;
+    try {
+      if (mode === "pdf") {
+        const page = await materialPdfDoc.getPage(n);
+        const unscaled = page.getViewport({ scale: 1 });
+        const cssScale = (availWidth() / unscaled.width) * materialZoom;
+        // Render the bitmap at the device's real pixel density (capped at 3 so
+        // huge pages don't blow up memory), then size it back down in CSS.
+        // Without this the canvas is rendered at 1x and looks blurry on every
+        // modern phone screen (which are 2x-3x).
+        const dpr = Math.min(window.devicePixelRatio || 1, 3);
+        const viewport = page.getViewport({ scale: cssScale * dpr });
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        canvas.style.width = `${viewport.width / dpr}px`;
+        canvas.style.height = `${viewport.height / dpr}px`;
+        await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+      } else {
+        const url = await getImageUrl(n);
+        if (pageImg.src !== url) pageImg.src = url;
+        pageImg.style.width = `${availWidth() * materialZoom}px`;
+        pageImg.style.height = "auto";
+      }
+    } finally {
+      spinner.hidden = true;
     }
-    label.textContent = L("pageOf", { n, total: materialPageCount });
     zoomLabel.textContent = `${Math.round(materialZoom * 100)}%`;
     prevBtn.disabled = n <= 1;
     nextBtn.disabled = n >= materialPageCount;
+    prefetchNeighbours(n);
   }
   function trackPageChange(newPage) {
     const now = Date.now();
