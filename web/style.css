@@ -274,6 +274,10 @@ table.grid .mono { font-family: "Courier New", monospace; letter-spacing: .5px; 
   background: color-mix(in srgb, var(--me-highlight) 16%, var(--card)) !important;
   border-top: 2px solid var(--me-highlight) !important;
   border-bottom: 2px solid var(--me-highlight) !important;
+  /* No walls between the columns inside this row — only the outer pill
+     (top/bottom above, and the two outer-edge borders below) should show. */
+  border-inline-start: none;
+  border-inline-end: none;
   animation: leaderboard-glow 1.6s ease-in-out infinite;
 }
 .leaderboard-row-me td:first-child { border-radius: 0 12px 12px 0; border-inline-end: 2px solid var(--me-highlight); }
