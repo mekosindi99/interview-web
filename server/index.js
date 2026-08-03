@@ -369,8 +369,24 @@ app.get("/audio/:fileId", requireSignedIn, async (req, res) => {
 // see /uploads/listening) is left untouched.
 app.post("/drive/revoke-public", requireAdmin, async (req, res) => {
   try {
+    let folderFixed = false;
+    // The real source of the exposure is usually the parent folder itself
+    // being link-shared (e.g. from setting it up in the Drive UI) — every
+    // file placed inside it then inherits that, and Drive refuses to delete
+    // an *inherited* permission at the individual-file level ("the
+    // authenticated user cannot delete the permission... limited access
+    // must be leveraged"). Fixing it on the folder fixes every file inside
+    // it in one shot, and lets the per-file pass below actually succeed for
+    // any permissions that genuinely were set directly on a file.
+    const folderPerms = await drive.permissions.list({ fileId: DRIVE_FOLDER_ID, fields: "permissions(id,type)" });
+    const folderAnyone = (folderPerms.data.permissions || []).find((p) => p.type === "anyone");
+    if (folderAnyone) {
+      await drive.permissions.delete({ fileId: DRIVE_FOLDER_ID, permissionId: folderAnyone.id });
+      folderFixed = true;
+    }
+
     let pageToken;
-    let checked = 0, revoked = 0;
+    let checked = 0, revoked = 0, skipped = 0;
     do {
       const list = await drive.files.list({
         q: `'${DRIVE_FOLDER_ID}' in parents and trashed = false`,
@@ -383,13 +399,19 @@ app.post("/drive/revoke-public", requireAdmin, async (req, res) => {
         const perms = await drive.permissions.list({ fileId: file.id, fields: "permissions(id,type)" });
         const anyone = (perms.data.permissions || []).find((p) => p.type === "anyone");
         if (anyone) {
-          await drive.permissions.delete({ fileId: file.id, permissionId: anyone.id });
-          revoked++;
+          try {
+            await drive.permissions.delete({ fileId: file.id, permissionId: anyone.id });
+            revoked++;
+          } catch (err) {
+            // Already handled via the folder-level fix above (inherited
+            // permission, can't be deleted per-file) — not a real failure.
+            skipped++;
+          }
         }
       }
       pageToken = list.data.nextPageToken;
     } while (pageToken);
-    res.json({ ok: true, checked, revoked });
+    res.json({ ok: true, folderFixed, checked, revoked, skipped });
   } catch (err) {
     console.error("revoke-public failed", err);
     res.status(500).json({ error: err.message });
