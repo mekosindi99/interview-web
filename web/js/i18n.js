@@ -533,7 +533,7 @@ export const t = {
     materialActiveBadge: "یا بۆ داواکار دهێتە نیشاندان",
     setActiveFormat: "ڤێ بکە یا نیشاندان",
     readMaterial: "خوندنا فایلێ ڕاهێنانێ",
-    materialEntryLabel: "لێرێ بکە بۆ خوندنێ",
+    materialEntryLabel: "کلیک بکە بۆ خواندنی",
     page: "پەڕ",
     pageOf: "پەڕ {n} ژ {total}",
     prevPage: "بەری",
