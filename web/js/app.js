@@ -116,14 +116,35 @@ function fmtFileSize(bytes) {
 // Candidate's own login credentials (name/phone/password), laid out as
 // clear label/value rows so it's easy to read at a glance and not lose
 // track of — shown pinned at the top of the pre-exam and result screens.
-function renderCredentialsCard(p) {
-  return el(`
-    <div class="card cred-card">
-      <div class="cred-row"><span class="cred-label">${L("name")}</span><span class="cred-value">${escapeHtml(p.name || "")}</span></div>
-      <div class="cred-row"><span class="cred-label">${L("phone")}</span><span class="cred-value mono">${escapeHtml(p.phone || "")}</span></div>
-      ${p.code ? `<div class="cred-row"><span class="cred-label">${L("password")}</span><span class="cred-value mono">${escapeHtml(p.code)}</span></div>` : ""}
+// A grid of equal-size tiles (2/3/4 columns, whatever fits) instead of a
+// stacked list of rows — same "info-grid" pattern used for the section
+// scores and exam-meta below, so every info card in the app reads the same
+// way. Tiles only render for fields that actually have a value (e.g. no
+// password tile if the profile has none), same auto-hide behavior as the
+// section-score grid already had.
+function infoGridHtml(tiles) {
+  const shown = tiles.filter((t) => t.value != null && t.value !== "");
+  return `
+    <div class="info-grid">
+      ${shown.map((t) => `
+        <div class="info-tile">
+          <div class="info-tile-lbl">${escapeHtml(t.label)}</div>
+          <div class="info-tile-val ${t.mono ? "mono" : ""}">${escapeHtml(String(t.value))}</div>
+        </div>
+      `).join("")}
     </div>
-  `);
+  `;
+}
+function infoGridCard(extraClass, tiles) {
+  return el(`<div class="card ${extraClass || ""}">${infoGridHtml(tiles)}</div>`);
+}
+
+function renderCredentialsCard(p) {
+  return infoGridCard("cred-card", [
+    { label: L("name"), value: p.name },
+    { label: L("phone"), value: p.phone, mono: true },
+    { label: L("password"), value: p.code, mono: true },
+  ]);
 }
 
 function renderFileInfoCard(m, lang) {
@@ -3008,11 +3029,11 @@ function renderResult() {
     const submittedStr = a.submittedAt?.seconds
       ? new Date(a.submittedAt.seconds * 1000).toLocaleString(localeMap[state.lang])
       : "—";
-    wrap.querySelector("#exam-meta").innerHTML = `
-      <p><b>${L("status")}:</b> ${L(EXAM_STATUS_KEY[a.examStatus] || "submitted")}</p>
-      <p><b>${L("submittedAtLabel")}:</b> ${submittedStr}</p>
-      ${Number.isFinite(a.durationSec) ? `<p><b>${L("examDurationLabel")}:</b> ${fmtTime(a.durationSec)}</p>` : ""}
-    `;
+    wrap.querySelector("#exam-meta").innerHTML = infoGridHtml([
+      { label: L("status"), value: L(EXAM_STATUS_KEY[a.examStatus] || "submitted") },
+      { label: L("submittedAtLabel"), value: submittedStr, mono: true },
+      { label: L("examDurationLabel"), value: Number.isFinite(a.durationSec) ? fmtTime(a.durationSec) : null, mono: true },
+    ]);
 
     // Four section scores (reading/listening/speaking/writing), each shown
     // even if pending manual grading (shows "—" for those until graded),

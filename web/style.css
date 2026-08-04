@@ -169,6 +169,17 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .section-score-lbl { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
 .section-score-val { font-size: 20px; font-weight: 800; color: var(--primary); }
 .total-score-line { display: flex; align-items: center; justify-content: space-between; font-size: 15px; padding-top: 10px; border-top: 1px solid var(--border); }
+
+/* Same "grid of equal tiles" pattern as .section-score-grid, generalized
+   for any label/value card (credentials, exam status/time) — auto-fit
+   picks 2/3/4 columns depending on how many tiles actually have a value
+   and how much width is available, instead of a fixed stacked list of
+   rows. A tile with no value is simply never added (see infoGridHtml), so
+   the grid always tightens up around exactly what's there. */
+.info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; }
+.info-tile { background: var(--bg); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; text-align: center; overflow: hidden; }
+.info-tile-lbl { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.info-tile-val { font-size: 15px; font-weight: 800; color: var(--primary); overflow-wrap: break-word; }
 .total-score-line b { font-size: 24px; color: var(--primary); }
 
 /* ---------- Candidate cards (replaces the old cramped table) ---------- */
