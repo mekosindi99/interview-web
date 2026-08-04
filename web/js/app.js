@@ -73,6 +73,11 @@ setPersistence(auth, browserLocalPersistence).catch(() => {});
 // TOEFL-style exam sections, fixed order. Every question belongs to exactly
 // one of these (old questions default to "reading" — see loadQuestions*).
 const SECTIONS = ["reading", "listening", "speaking", "writing"];
+// Every question, in every section, is worth exactly 2 points — no
+// per-question override anywhere, admin-set or otherwise. Previously each
+// question carried its own editable "points" value (default 1), which meant
+// two reading questions could silently be worth different amounts.
+const POINTS_PER_QUESTION = 2;
 const DEFAULT_SECTION_MINUTES = { reading: 20, listening: 15, speaking: 10, writing: 20 };
 // 0 = no limit, use every active question in that section.
 const DEFAULT_SECTION_COUNTS = { reading: 0, listening: 0, speaking: 0, writing: 0 };
@@ -1766,7 +1771,7 @@ function renderCandidateResultPanel(c) {
           row.appendChild(el(`<p class="writing-answer-view">${escapeHtml(ans?.text || "")}</p>`));
           if (!ans?.text) row.appendChild(el(`<p class="hint">${L("noAnswerGiven")}</p>`));
         }
-        const scoreInput = el(`<label>${L("scoreOutOf", { max: q.points ?? 1 })}<input type="number" min="0" max="${q.points ?? 1}" name="score_${q.id}" value="${manualScores[q.id] ?? 0}" /></label>`);
+        const scoreInput = el(`<label>${L("scoreOutOf", { max: q.points ?? POINTS_PER_QUESTION })}<input type="number" min="0" max="${q.points ?? POINTS_PER_QUESTION}" name="score_${q.id}" value="${manualScores[q.id] ?? 0}" /></label>`);
         row.appendChild(scoreInput);
         gradingForm.appendChild(row);
       });
@@ -1780,7 +1785,7 @@ function renderCandidateResultPanel(c) {
         const newManualScores = {};
         let manualScore = 0;
         manualQs.forEach((q) => {
-          const v = Math.max(0, Math.min(q.points ?? 1, Number(f.get(`score_${q.id}`)) || 0));
+          const v = Math.max(0, Math.min(q.points ?? POINTS_PER_QUESTION, Number(f.get(`score_${q.id}`)) || 0));
           newManualScores[q.id] = v;
           manualScore += v;
         });
@@ -2485,8 +2490,12 @@ function renderQuestionsTab() {
           // Stable, content-derived id (not a random addDoc id) so clicking
           // this button again re-writes the same docs instead of inserting
           // duplicates every time.
+          // { ...q, points: ... } last: questions.js's sample data still
+          // carries its own points value (1), which would otherwise win over
+          // the spread and reintroduce a non-2 question every time this
+          // button is used.
           await setDoc(doc(db, "questions", seedDocId(q)),
-            { section: "reading", ...q, active: true, createdAt: serverTimestamp() },
+            { section: "reading", ...q, points: POINTS_PER_QUESTION, active: true, createdAt: serverTimestamp() },
             { merge: true });
         }
         alert(L("seeded"));
@@ -2522,6 +2531,23 @@ function renderQuestionsTab() {
       }
     };
     wrap.appendChild(dedupeBtn);
+    const uneqCount = state.questions.filter((q) => q.points !== POINTS_PER_QUESTION).length;
+    if (uneqCount > 0) {
+      const fixPointsBtn = el(`<button class="ghost">${L("fixPointsBtn", { n: uneqCount })}</button>`);
+      fixPointsBtn.onclick = async () => {
+        if (!confirm(L("fixPointsConfirm", { n: uneqCount, points: POINTS_PER_QUESTION }))) return;
+        fixPointsBtn.disabled = true;
+        try {
+          for (const q of state.questions) {
+            if (q.points !== POINTS_PER_QUESTION) await updateDoc(doc(db, "questions", q.id), { points: POINTS_PER_QUESTION });
+          }
+          alert(L("fixPointsDone", { n: uneqCount }));
+        } finally {
+          fixPointsBtn.disabled = false;
+        }
+      };
+      wrap.appendChild(fixPointsBtn);
+    }
     const addBtn = el(`<button class="primary">${L("addQuestion")}</button>`);
     const formHost = el(`<div id="q-form-host"></div>`);
     addBtn.onclick = () => { formHost.innerHTML = ""; formHost.appendChild(renderQuestionForm()); };
@@ -2601,7 +2627,7 @@ function renderQuestionsTab() {
 
 function answerPreview(q) {
   if (q.type === "speaking" || q.type === "writing") {
-    return `${L("scoreOutOf", { max: q.points ?? 1 })} — ${L("manualGrading")}`;
+    return `${L("scoreOutOf", { max: q.points ?? POINTS_PER_QUESTION })} — ${L("manualGrading")}`;
   }
   if (q.type === "truefalse") {
     return `${L("correctAnswer")}: <b>${q.correctAnswer ? L("yes") : L("no")}</b>`;
@@ -2642,7 +2668,6 @@ function renderQuestionForm(existing) {
       <label>${L("category")}
         <select name="category">${CATEGORIES.map((c) => `<option value="${c}">${L(c)}</option>`).join("")}</select>
       </label>
-      <label>${L("points")}<input type="number" name="points" value="${existing?.points ?? 1}" min="1" /></label>
       <label>${L("displayLang")}
         <select name="displayLang">
           <option value="">${L("displayLangAuto")}</option>
@@ -2672,7 +2697,7 @@ function renderQuestionForm(existing) {
     const type = typeSel.value;
     const section = sectionSel.value;
     if (type === "speaking" || type === "writing") {
-      extra.appendChild(el(`<p class="hint">${L(type === "speaking" ? "speaking" : "writing")}: ${L("points")} = ${L("scoreOutOf", { max: "" })}. ${L("manualGrading")}.</p>`));
+      extra.appendChild(el(`<p class="hint">${L("scoreOutOf", { max: POINTS_PER_QUESTION })} — ${L("manualGrading")}.</p>`));
       return;
     }
     if (type === "mcq" || type === "image") {
@@ -2783,7 +2808,7 @@ function renderQuestionForm(existing) {
       type,
       section: f.get("section"),
       category: f.get("category"),
-      points: Number(f.get("points")) || 1,
+      points: POINTS_PER_QUESTION,
       displayLang: f.get("displayLang") || null,
       text: { ar: f.get("text_ar"), ku: f.get("text_ku") || f.get("text_ar") },
     };
@@ -3240,7 +3265,7 @@ async function submitExam(activeQs) {
   SECTIONS.forEach((s) => { sectionScores[s] = { score: 0, total: 0 }; });
   activeQs.forEach((q) => {
     const sec = q.section || "reading";
-    const pts = q.points || 1;
+    const pts = q.points || POINTS_PER_QUESTION;
     totalPoints += pts;
     sectionScores[sec].total += pts;
     if (q.type === "speaking" || q.type === "writing") {
@@ -3518,7 +3543,7 @@ function renderResult() {
         } else {
           row.appendChild(el(`<p class="writing-answer-view">${escapeHtml(ans?.text || "")}</p>`));
         }
-        row.appendChild(el(`<p class="hint">${graded ? `${L("scoreOutOf", { max: q.points ?? 1 })}: ${manualScores[q.id] ?? 0}` : L("pendingGrading")}</p>`));
+        row.appendChild(el(`<p class="hint">${graded ? `${L("scoreOutOf", { max: q.points ?? POINTS_PER_QUESTION })}: ${manualScores[q.id] ?? 0}` : L("pendingGrading")}</p>`));
         card.appendChild(row);
       });
       review.appendChild(card);
