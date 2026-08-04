@@ -88,6 +88,10 @@ service cloud.firestore {
       allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
       allow update: if isSignedIn() && resource.data.uid == request.auth.uid
         && request.resource.data.uid == request.auth.uid;
+      // Staff-only bulk cleanup (the admin's "تصفير إحصائيات القراءة"
+      // button) — there was no delete rule at all before, so that button
+      // failed with permission-denied on every click.
+      allow delete: if isStaff();
     }
 
     // Best-effort device block list: checked right after sign-in so a
