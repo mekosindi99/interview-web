@@ -784,7 +784,7 @@ function renderAdminShell() {
 function renderProfileFieldsForm() {
   const cfg = state.examConfig;
   const profileForm = el(`
-    <form id="profile-fields-form" class="card">
+    <form id="profile-fields-form" style="border-top:1px solid var(--border);margin-top:16px;padding-top:16px">
       <h3>${L("profileFieldsTitle")}</h3>
       <p class="hint">${L("profileFieldsHint")}</p>
       ${PROFILE_FIELD_KEYS.map((k) => `
@@ -1244,8 +1244,10 @@ function renderCandidatesTab() {
         ${state.profile.role === "admin" ? `<button id="new-exam-all-btn" class="ghost">${L("newExamAllBtn")}</button>` : ""}
         ${ADMIN_SERVER_URL ? `<button id="sync-all-leaderboard-btn" class="ghost">${L("syncLeaderboardAllBtn")}</button>` : ""}
       </div>
-      <div id="new-cand-form"></div>
-      <div id="profile-fields-host"></div>
+      <div class="card" id="candidate-setup-card">
+        <div id="new-cand-form"></div>
+        <div id="profile-fields-host"></div>
+      </div>
       <div class="row-actions" style="margin:12px 0">
         <select id="filter-status">
           <option value="all">${L("filterAll")}</option>
@@ -1731,7 +1733,8 @@ function renderCandidateResultPanel(c) {
 
 function renderNewCandidateForm() {
   const wrap = el(`
-    <form id="cand-form" class="card">
+    <form id="cand-form">
+      <h3>${L("createCandidate")}</h3>
       <label>${L("name")}<input required name="name" /></label>
       <label>${L("phone")}<input required name="phone" inputmode="numeric" maxlength="11" pattern="\\d{11}" placeholder="07701234567" /></label>
       <p class="hint">${L("invalidPhone")}</p>
@@ -2103,13 +2106,37 @@ function renderMaterialAdminTab() {
 
   const statsHost = el(`
     <div>
-      <h3>${L("materialStats")}</h3>
+      <div class="row-actions" style="justify-content:space-between;align-items:center">
+        <h3 style="margin:0">${L("materialStats")}</h3>
+        ${isAdmin ? `<button type="button" id="reset-material-stats-btn" class="link danger">${L("resetMaterialStatsBtn")}</button>` : ""}
+      </div>
       <div class="cand-card-grid" id="material-stats-rows">
         <p class="hint">${L("loading")}</p>
       </div>
     </div>
   `);
   wrap.appendChild(statsHost);
+  const resetStatsBtn = statsHost.querySelector("#reset-material-stats-btn");
+  if (resetStatsBtn) {
+    resetStatsBtn.onclick = async () => {
+      // Deleting a candidate account only removes their users/{uid} doc —
+      // their materialSessions docs (reading-time tracking) are a separate
+      // top-level collection, not a subcollection, so a hard delete never
+      // touches them. Left them behind as orphaned rows (reported: deleted
+      // candidates' names still showing reading stats) with no other way
+      // to clear them.
+      if (!confirm(L("resetMaterialStatsConfirm"))) return;
+      resetStatsBtn.disabled = true;
+      try {
+        const snap = await getDocs(collection(db, "materialSessions"));
+        await Promise.all(snap.docs.map((d) => deleteDoc(d.ref)));
+        setState({});
+      } catch (err) {
+        alert(`${L("error")}: ${err.message}`);
+      }
+      resetStatsBtn.disabled = false;
+    };
+  }
 
   (async () => {
     if (state.material == null) {
