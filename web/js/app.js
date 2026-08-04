@@ -1121,6 +1121,7 @@ function renderCandidatesTab() {
       <button id="new-cand-btn" class="primary">${L("createCandidate")}</button>
       <button id="toggle-removed-btn" class="ghost">${showRemoved ? L("candidates") : L("removedCandidates")}</button>
       ${state.profile.role === "admin" ? `<button id="reset-all-exams-btn" class="ghost danger">${L("resetAllExamsBtn")}</button>` : ""}
+      ${state.profile.role === "admin" ? `<button id="new-exam-all-btn" class="ghost">${L("newExamAllBtn")}</button>` : ""}
       ${ADMIN_SERVER_URL ? `<button id="sync-all-leaderboard-btn" class="ghost">${L("syncLeaderboardAllBtn")}</button>` : ""}
       <div id="new-cand-form"></div>
       <div class="row-actions" style="margin:12px 0">
@@ -1155,6 +1156,8 @@ function renderCandidatesTab() {
   toolbar.querySelector("#toggle-removed-btn").onclick = () => setState({ showRemovedCandidates: !showRemoved });
   const resetAllBtn = toolbar.querySelector("#reset-all-exams-btn");
   if (resetAllBtn) resetAllBtn.onclick = resetAllExamsBulk;
+  const newExamAllBtn = toolbar.querySelector("#new-exam-all-btn");
+  if (newExamAllBtn) newExamAllBtn.onclick = () => newExamAllBulk(newExamAllBtn);
   const syncAllBtn = toolbar.querySelector("#sync-all-leaderboard-btn");
   if (syncAllBtn) syncAllBtn.onclick = () => syncAllLeaderboard(syncAllBtn);
   const rows = toolbar.querySelector("#cand-rows");
@@ -1211,11 +1214,6 @@ function renderCandidatesTab() {
     const historyBtn = makeChip("🗂️", L("examHistory"));
     historyBtn.onclick = () => setState({ adminTab: "candidates", viewCandidateHistory: c.id });
     actions.appendChild(historyBtn);
-    if (state.profile.role === "admin" && c.examStatus && c.examStatus !== "not_started") {
-      const newExamBtn = makeChip("🔄", L("newExam"), "warn");
-      newExamBtn.onclick = () => resetCandidateExam(c);
-      actions.appendChild(newExamBtn);
-    }
     const blockBtn = makeChip(c.blocked ? "✅" : "🚫", c.blocked ? L("unblock") : L("block"), "warn");
     blockBtn.onclick = async () => {
       const blocking = !c.blocked;
@@ -1317,26 +1315,56 @@ async function syncAllLeaderboard(btn) {
 // Archives the candidate's current attempt (if any) into pastAttempts, then
 // resets their profile so they can take the exam again from scratch — old
 // results survive as history instead of being silently overwritten.
+async function performExamReset(c) {
+  const attemptSnap = await getDoc(doc(db, "attempts", c.id));
+  if (attemptSnap.exists()) {
+    await addDoc(collection(db, "users", c.id, "pastAttempts"), {
+      ...attemptSnap.data(), archivedAt: serverTimestamp(),
+    });
+    await deleteDoc(doc(db, "attempts", c.id));
+  }
+  await updateDoc(doc(db, "users", c.id), {
+    examStatus: "not_started",
+    examProgress: deleteField(), examManualProgress: deleteField(),
+    examSectionIndex: deleteField(), examQIndex: deleteField(),
+    examSectionDeadline: deleteField(), examStartedAtMs: deleteField(),
+    examSelectedQuestionIds: deleteField(),
+  });
+}
 async function resetCandidateExam(c) {
   if (!confirm(L("newExamConfirm", { name: c.name }))) return;
   try {
-    const attemptSnap = await getDoc(doc(db, "attempts", c.id));
-    if (attemptSnap.exists()) {
-      await addDoc(collection(db, "users", c.id, "pastAttempts"), {
-        ...attemptSnap.data(), archivedAt: serverTimestamp(),
-      });
-      await deleteDoc(doc(db, "attempts", c.id));
-    }
-    await updateDoc(doc(db, "users", c.id), {
-      examStatus: "not_started",
-      examProgress: deleteField(), examManualProgress: deleteField(),
-      examSectionIndex: deleteField(), examQIndex: deleteField(),
-      examSectionDeadline: deleteField(), examStartedAtMs: deleteField(),
-      examSelectedQuestionIds: deleteField(),
-    });
+    await performExamReset(c);
   } catch (err) {
     alert(`${L("error")}: ${err.message}`);
   }
+}
+
+// Bulk version of the per-candidate "امتحان جديد" chip — one button for
+// every candidate who's touched the exam at all (not "not_started"),
+// instead of clicking it per card. Same archive-then-reset per candidate
+// (performExamReset), so past results still survive in pastAttempts same
+// as the single version — just looped.
+async function newExamAllBulk(btn) {
+  const candidates = state.candidates.filter((c) => !c.deleted && c.examStatus && c.examStatus !== "not_started");
+  if (!candidates.length) { alert(L("newExamAllNone")); return; }
+  if (!confirm(L("newExamAllConfirm", { n: candidates.length }))) return;
+  btn.disabled = true;
+  const originalText = btn.textContent;
+  let done = 0, failed = 0;
+  for (const c of candidates) {
+    btn.textContent = L("newExamAllProgress", { done, total: candidates.length });
+    try {
+      await performExamReset(c);
+      done++;
+    } catch (err) {
+      console.warn(`new-exam reset failed for candidate ${c.id}`, err);
+      failed++;
+    }
+  }
+  btn.textContent = originalText;
+  btn.disabled = false;
+  alert(L("newExamAllDone", { done, total: candidates.length, failed }));
 }
 
 function renderCandidateHistoryPanel(c) {
