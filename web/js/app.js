@@ -2897,16 +2897,19 @@ function renderExam() {
     // the result screen never showed up here even though it's the exact
     // same renderCredentialsCard() call.
     const wrap = el(`<div class="result-shell"></div>`);
+    // Exact same entry card the result screen shows, in the same position
+    // (above the credentials) — this screen used to open the material from a
+    // plain ghost button tucked inside the actions card below, which is why
+    // it still looked like the old design here after the card was built.
+    wrap.appendChild(buildMaterialEntryCard());
     wrap.appendChild(renderCredentialsCard(state.profile));
     const actionsCard = el(`
       <div class="card center-card">
         <h2>${L("appName")}</h2>
-        <button id="material-btn" class="ghost">${L("readMaterial")}</button>
         <button id="start-btn" class="primary">${L("startExam")}</button>
       </div>
     `);
     wrap.appendChild(actionsCard);
-    wrap.querySelector("#material-btn").onclick = () => setState({ route: "material" });
     wrap.querySelector("#start-btn").onclick = async () => {
       // Manual mode: every candidate gets the exact same admin-picked set.
       // Random mode: sample once, here, from the full pool — sectionCounts
@@ -3284,31 +3287,20 @@ function buildLeaderboardCard() {
   return card;
 }
 
-function renderResult() {
-  const p = state.profile;
-  const wrap = el(`
-    <div class="shell">
-      <div id="leaderboard-host"></div>
-      <div class="result-shell">
-        <div class="card material-entry-card" id="material-entry-card">
-          <div class="material-entry-label">${L("materialEntryLabel")}</div>
-          <div class="material-entry-thumb" id="material-entry-thumb">📖</div>
-        </div>
-        <div id="cred-card-host"></div>
-        <div class="card center-card" id="exam-meta"></div>
-        <div class="card center-card" id="result-summary">
-          <h2>${L("yourResult")}</h2>
-          <p>${L("loading")}</p>
-        </div>
-      </div>
-      <div id="result-review"></div>
+// The "انقر هنا للقراءة" entry card for the training material, with a
+// thumbnail of its first page. Shared by both candidate home screens — the
+// pre-exam one and the post-exam result one — because it used to be built
+// inline inside renderResult() only, so the pre-exam screen was left with a
+// plain ghost button and looked like the old design no matter how much the
+// card was restyled. One definition, one appearance, both screens.
+function buildMaterialEntryCard() {
+  const card = el(`
+    <div class="card material-entry-card" id="material-entry-card">
+      <div class="material-entry-label">${L("materialEntryLabel")}</div>
+      <div class="material-entry-thumb" id="material-entry-thumb">📖</div>
     </div>
   `);
-  wrap.querySelector("#material-entry-card").onclick = () => setState({ route: "material" });
-  // Shown at the very top of this screen (the candidate's home once
-  // they've taken the exam), on every visit — not behind a separate
-  // button/route, and not buried below the rest of the page.
-  wrap.querySelector("#leaderboard-host").appendChild(buildLeaderboardCard());
+  card.onclick = () => setState({ route: "material" });
   // Thumbnail of the material's first page — image mode only (a PDF's
   // first page would need pdf.js loaded just to draw a preview, not
   // worth the extra weight on every visit to this screen just for a
@@ -3327,12 +3319,37 @@ function renderResult() {
       });
       if (!res.ok) return;
       const url = URL.createObjectURL(await res.blob());
-      const thumb = wrap.querySelector("#material-entry-thumb");
+      const thumb = card.querySelector("#material-entry-thumb");
       if (thumb) thumb.innerHTML = `<img src="${url}" alt="" />`;
     } catch (err) {
       console.warn("material thumbnail failed", err);
     }
   })();
+  return card;
+}
+
+function renderResult() {
+  const p = state.profile;
+  const wrap = el(`
+    <div class="shell">
+      <div id="leaderboard-host"></div>
+      <div class="result-shell">
+        <div id="material-entry-host"></div>
+        <div id="cred-card-host"></div>
+        <div class="card center-card" id="exam-meta"></div>
+        <div class="card center-card" id="result-summary">
+          <h2>${L("yourResult")}</h2>
+          <p>${L("loading")}</p>
+        </div>
+      </div>
+      <div id="result-review"></div>
+    </div>
+  `);
+  wrap.querySelector("#material-entry-host").appendChild(buildMaterialEntryCard());
+  // Shown at the very top of this screen (the candidate's home once
+  // they've taken the exam), on every visit — not behind a separate
+  // button/route, and not buried below the rest of the page.
+  wrap.querySelector("#leaderboard-host").appendChild(buildLeaderboardCard());
   wrap.querySelector("#cred-card-host").appendChild(renderCredentialsCard(p));
   getDoc(doc(db, "attempts", p.id)).then((snap) => {
     if (!snap.exists()) return;
