@@ -2129,8 +2129,19 @@ function renderMaterialAdminTab() {
       resetStatsBtn.disabled = true;
       try {
         const snap = await getDocs(collection(db, "materialSessions"));
-        await Promise.all(snap.docs.map((d) => deleteDoc(d.ref)));
+        // allSettled (not all) so one failing doc doesn't hide whether the
+        // rest actually succeeded — and logs exactly which doc/why, since
+        // "Missing or insufficient permissions" alone doesn't say if it's
+        // every doc or just one weird one.
+        const results = await Promise.allSettled(snap.docs.map((d) => deleteDoc(d.ref)));
+        const failed = results.filter((r) => r.status === "rejected");
+        if (failed.length) {
+          console.error("materialSessions delete failures:", failed.map((r) => r.reason?.message || r.reason));
+        }
         setState({});
+        if (failed.length) {
+          alert(`${L("error")}: ${failed.length}/${results.length} — ${failed[0].reason?.message || failed[0].reason}`);
+        }
       } catch (err) {
         alert(`${L("error")}: ${err.message}`);
       }
