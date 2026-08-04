@@ -230,6 +230,21 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .cred-label { color: var(--muted); font-size: 13px; }
 .cred-value { font-weight: 700; font-size: 15px; }
 
+/* Same key:value content as .cred-row, but each row is two visible
+   rectangles ("windows") side by side instead of plain text over a dashed
+   line — scoped to the result screen's own cards so the admin's compact
+   candidate-list cards (which reuse .cred-row too) are unaffected. */
+.result-shell .cred-row {
+  display: flex; align-items: stretch; gap: 8px; padding: 0; border-bottom: none; margin-bottom: 8px;
+}
+.result-shell .cred-row:last-child { margin-bottom: 0; }
+.result-shell .cred-label, .result-shell .cred-value {
+  flex: 1; min-width: 0; display: flex; align-items: center;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px;
+}
+.result-shell .cred-label { color: var(--muted); font-size: 13px; }
+.result-shell .cred-value { justify-content: flex-end; font-weight: 700; font-size: 15px; overflow-wrap: break-word; }
+
 .history-card { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; margin-bottom: 8px; }
 .history-card-score { font-weight: 700; font-size: 16px; }
 
@@ -367,9 +382,14 @@ table.grid th { background: #fafafa; color: var(--muted); font-weight: 600; }
 }
 
 @media (max-width: 480px) {
-  #app { padding: 12px; }
+  #app { padding: 8px; }
   .card { padding: 14px; }
   .center-card { margin: 20px auto; }
+  /* These were capped at the same 420px used on desktop, which on an
+     actual phone (already narrower than that) left visible empty margins
+     on both sides on top of #app's own padding — doubled-up inset. Letting
+     them use the full available width closes that gap. */
+  .result-shell, .material-entry-card { max-width: 100%; }
   h1 { font-size: 19px; }
   h2 { font-size: 16px; }
   .lang-row { flex-wrap: wrap; row-gap: 8px; }
