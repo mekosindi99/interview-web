@@ -138,6 +138,40 @@ img, canvas, svg, video, audio { max-width: 100%; }
 .about-list li { color: var(--text); font-size: 14px; line-height: 1.6; }
 .brand-logo { width: 84px; height: 84px; display: block; margin: 0 auto 12px; border-radius: 16px; }
 
+/* ---- Login screen ----
+   Grouped into a branding block and a form block with one clear gap between
+   them, instead of a flat run of elements each carrying its own margin. The
+   card is narrower than the generic .center-card because a login form is two
+   fields wide, not a content page — a wide box around short fields is what
+   made it feel unsettled. */
+.login-card { max-width: 380px; padding: 28px 24px; }
+.login-brand { margin-bottom: 22px; }
+.login-brand h1 { margin: 0 0 4px; }
+.login-sub { margin: 0; color: var(--muted); font-size: 14px; }
+.login-form { text-align: start; }
+.login-form label { margin-bottom: 16px; font-weight: 600; color: var(--text); }
+.login-form input { margin-top: 6px; padding: 12px; }
+.login-form input:focus-visible {
+  outline: none; border-color: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent);
+}
+/* Sits under its own field as part of the label, so it moves with the field
+   rather than floating between the two as a loose paragraph. */
+.field-hint { display: block; margin-top: 6px; font-size: 12px; font-weight: 400; color: var(--muted); }
+.field-hint-warn { color: #a06600; }
+.login-form input.input-warn { border-color: #e0b050; }
+.login-alert {
+  background: #fff7e6; border: 1px solid #f0c36d; color: #7a5200;
+  padding: 10px 12px; border-radius: 8px; margin-bottom: 16px;
+  font-size: 13px; text-align: start; line-height: 1.5;
+}
+/* Full width and taller than the default pill: it's the only action on the
+   screen, so it shouldn't read as one option among several. */
+.login-submit { width: 100%; min-height: 46px; font-size: 15px; font-weight: 700; margin-top: 4px; }
+
+:root[data-theme="dark"] .login-alert { background: #3a2f14; border-color: #6b5320; color: #f0d79a; }
+:root[data-theme="dark"] .field-hint-warn { color: #e0b050; }
+
 h1 { font-size: 22px; margin: 0 0 8px; }
 h2 { font-size: 18px; margin: 0 0 12px; }
 

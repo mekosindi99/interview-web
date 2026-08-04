@@ -737,21 +737,27 @@ function renderAdminSetup() {
 // via phoneToEmail — see the Helpers section).
 function renderLogin() {
   const wrap = el(`
-    <div class="card center-card">
-      <img class="brand-logo" src="assets/brand/logo.svg" alt="${L("appName")}" />
-      <h1>${L("appName")}</h1>
-      <h2>${L("loginTitle")}</h2>
-      ${state.loginBlocked ? `<div class="err">${L("loginBlockedMsg")}</div>` : ""}
-      ${state.kickedBySession ? `<div class="err">${L("kickedBySessionMsg")}</div>` : ""}
-      <form id="login-form">
+    <div class="card center-card login-card">
+      <div class="login-brand">
+        <img class="brand-logo" src="assets/brand/logo.svg" alt="" />
+        <h1>${L("appName")}</h1>
+        <p class="login-sub">${L("loginTitle")}</p>
+      </div>
+      ${state.loginBlocked ? `<div class="login-alert">${L("loginBlockedMsg")}</div>` : ""}
+      ${state.kickedBySession ? `<div class="login-alert">${L("kickedBySessionMsg")}</div>` : ""}
+      <form id="login-form" class="login-form">
         <label>${L("email")} / ${L("phone")}
-          <input required name="identifier" autocomplete="username" placeholder="you@email.com — or — 07701234567" />
+          <input required name="identifier" autocomplete="username" placeholder="07701234567" />
+          <!-- One hint line, not two. The 11-digit rule used to sit here as a
+               permanent second line in the same muted style as the help text,
+               so an untouched form looked like it was already reporting an
+               error. It's now the same line, which turns into a warning only
+               while what's actually typed is an incomplete phone number. -->
+          <span class="field-hint" id="identifier-hint">${L("phoneLoginHint")}</span>
         </label>
-        <p class="hint">${L("phoneLoginHint")}</p>
-        <p class="hint">${L("invalidPhone")}</p>
         <label>${L("password")}${pwField("password", 'required autocomplete="current-password"')}</label>
         <div class="err" id="login-err"></div>
-        <button type="submit">${L("loginBtn")}</button>
+        <button type="submit" class="primary login-submit">${L("loginBtn")}</button>
       </form>
     </div>
   `);
@@ -762,10 +768,20 @@ function renderLogin() {
   // is longer — so the cap only kicks in while the value is all digits, and
   // an email is left completely alone.
   const identifierInput = wrap.querySelector('input[name="identifier"]');
+  const identifierHint = wrap.querySelector("#identifier-hint");
   identifierInput.oninput = () => {
     if (/^\d+$/.test(identifierInput.value) && identifierInput.value.length > 11) {
       identifierInput.value = identifierInput.value.slice(0, 11);
     }
+    // Only a partially-typed phone number is worth flagging: an empty field is
+    // just untouched, and an email (or a complete 11-digit number) is fine as
+    // it stands. Same isPhone rule the submit handler below enforces, surfaced
+    // while typing instead of only after a failed attempt.
+    const v = identifierInput.value.trim();
+    const incomplete = /^\d+$/.test(v) && !isPhone(v);
+    identifierHint.textContent = incomplete ? L("invalidPhone") : L("phoneLoginHint");
+    identifierHint.classList.toggle("field-hint-warn", incomplete);
+    identifierInput.classList.toggle("input-warn", incomplete);
   };
   wrap.querySelector("#login-form").onsubmit = async (e) => {
     e.preventDefault();
