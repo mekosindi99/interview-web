@@ -1904,7 +1904,6 @@ function renderMaterialAdminTab() {
       </form>
     `);
     const imgErr = el(`<div class="err"></div>`);
-    imgForm.appendChild(el(`<p class="hint">${L("uploadMaterialImagesHint")}</p>`));
     imgForm.onsubmit = async (e) => {
       e.preventDefault();
       const input = imgForm.querySelector("[name=files]");
