@@ -719,6 +719,7 @@ function renderLogin() {
           <input required name="identifier" autocomplete="username" placeholder="you@email.com — or — 07701234567" />
         </label>
         <p class="hint">${L("phoneLoginHint")}</p>
+        <p class="hint">${L("invalidPhone")}</p>
         <label>${L("password")}${pwField("password", 'required autocomplete="current-password"')}</label>
         <div class="err" id="login-err"></div>
         <button type="submit">${L("loginBtn")}</button>
@@ -732,6 +733,12 @@ function renderLogin() {
     const errBox = wrap.querySelector("#login-err");
     errBox.textContent = "";
     const raw = String(f.get("identifier")).trim();
+    // Same 11-digit rule enforced when creating the candidate in the first
+    // place (isPhone) — only applies when it's not an email/admin login.
+    if (!raw.includes("@") && !isPhone(raw)) {
+      errBox.textContent = L("invalidPhone");
+      return;
+    }
     const email = raw.includes("@") ? raw : phoneToEmail(raw);
     try {
       await signInWithEmailAndPassword(auth, email, f.get("password"));
