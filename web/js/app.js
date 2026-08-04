@@ -147,6 +147,25 @@ function renderCredentialsCard(p) {
   ]);
 }
 
+// Same file-info-card "window" look as the PDF's own info box (icon + name
+// + meta line), for the image-pages count instead of just a bare hint —
+// per request, so both format cards show their status the same way.
+function renderImagesInfoCard(m, lang) {
+  const localeMap = { ar: "ar-IQ-u-nu-latn", ku: "en-GB", en: "en-US" };
+  const dateStr = m.imagesUpdatedAt?.seconds
+    ? new Date(m.imagesUpdatedAt.seconds * 1000).toLocaleString(localeMap[lang])
+    : m.imagesUpdatedAtMs ? new Date(m.imagesUpdatedAtMs).toLocaleString(localeMap[lang]) : "";
+  return el(`
+    <div class="file-info-card">
+      <div class="file-info-icon">🖼️</div>
+      <div>
+        <div class="file-info-name">${L("materialImagesCount", { n: m.images.length })}</div>
+        ${dateStr ? `<div class="file-info-meta">${escapeHtml(dateStr)}</div>` : ""}
+      </div>
+    </div>
+  `);
+}
+
 function renderFileInfoCard(m, lang) {
   // -u-nu-latn: keep Arabic date/time formatting but force Western digits
 // (0-9) instead of Eastern Arabic-Indic numerals (٠-٩) everywhere in the app.
@@ -1895,7 +1914,7 @@ function renderMaterialAdminTab() {
       ${hasImages && mode === "images" ? `<span class="status-badge graded">${L("materialActiveBadge")}</span>` : ""}
     </div>
   `));
-  imgCard.appendChild(el(`<p class="hint">${hasImages ? L("materialImagesCount", { n: m.images.length }) : L("noMaterialImages")}</p>`));
+  imgCard.appendChild(hasImages ? renderImagesInfoCard(m, state.lang) : el(`<p class="hint">${L("noMaterialImages")}</p>`));
   if (isAdmin) {
     const imgForm = el(`
       <form class="row-actions" style="align-items:center">
