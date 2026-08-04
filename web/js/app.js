@@ -2951,11 +2951,11 @@ function renderResult() {
   const wrap = el(`
     <div class="shell">
       <div id="leaderboard-host"></div>
-      <div class="card material-entry-card" id="material-entry-card">
-        <div class="material-entry-label">${L("readMaterial")}</div>
-        <div class="material-entry-thumb" id="material-entry-thumb">📖</div>
-      </div>
       <div class="result-shell">
+        <div class="card material-entry-card" id="material-entry-card">
+          <div class="material-entry-label">${L("materialEntryLabel")}</div>
+          <div class="material-entry-thumb" id="material-entry-thumb">📖</div>
+        </div>
         <div id="cred-card-host"></div>
         <div class="card center-card" id="exam-meta"></div>
         <div class="card center-card" id="result-summary">
