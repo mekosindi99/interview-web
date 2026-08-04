@@ -586,12 +586,19 @@ function render() {
   if (!state.user) return root.appendChild(renderLogin());
 
   if (state.profile?.role === "candidate") {
-    // Mandatory profile intake — blocks every other candidate route (exam,
-    // result, material) until filled in, if the admin has any of these
-    // fields turned on and this candidate hasn't completed it yet.
+    // Mandatory profile intake — shown once, before the candidate has
+    // started the exam at all. Deliberately scoped to examStatus being
+    // "not_started" (or missing): gating on profileCompleted alone, with
+    // no regard for how far along the exam already was, could re-trigger
+    // this form mid-exam or even after submitting (e.g. on a reload where
+    // the write hadn't been read back yet) — reported as the exam
+    // "getting stuck in a loop" instead of ever reaching the result
+    // screen. Once a candidate has actually started, this never
+    // interrupts them again regardless of profileCompleted's value.
     const pf = state.examConfig.profileFields;
     const anyFieldOn = PROFILE_FIELD_KEYS.some((k) => pf[k]);
-    if (anyFieldOn && !state.profile.profileCompleted) {
+    const examNotStarted = !state.profile.examStatus || state.profile.examStatus === "not_started";
+    if (anyFieldOn && !state.profile.profileCompleted && examNotStarted) {
       root.appendChild(renderProfileIntakeForm());
       return;
     }
