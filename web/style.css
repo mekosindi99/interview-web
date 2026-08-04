@@ -133,6 +133,7 @@ form input, form select {
 button {
   cursor: pointer; border: none; border-radius: 999px; padding: 10px 20px; font-size: 14px;
   background: #eee; color: var(--text); transition: background .15s ease, transform .08s ease;
+  min-height: 40px; box-sizing: border-box;
 }
 button:not(.link):hover { transform: translateY(-1px); }
 button:not(.link):active { transform: translateY(0) scale(.97); }
@@ -178,7 +179,8 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .cand-card-actions { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 2px; }
 
 .action-chip {
-  display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px; font-size: 12px; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 6px 12px;
+  font-size: 12px; font-weight: 700; min-height: 30px; box-sizing: border-box;
   background: #eef1f5; color: var(--text); border-radius: 999px; border: none;
 }
 .action-chip-icon { font-size: 13px; line-height: 1; }
@@ -330,6 +332,17 @@ table.grid .mono { font-family: "Courier New", monospace; letter-spacing: .5px; 
   .stat-box { min-width: calc(50% - 6px); }
   .score-chart-lbl { width: 52px; font-size: 11px; }
   .exam-nav { flex-direction: row; }
+  /* Action chips (candidate card buttons) wrapped raggedly at their own
+     text width on narrow phones — different widths per row made the whole
+     card look unorganized. A fixed 2-column grid gives every chip the same
+     size regardless of label length. */
+  .cand-card-actions { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+  .action-chip { width: 100%; }
+  /* Same idea for the toolbar's bulk-action buttons and the admin tab
+     nav — full-width stacked buttons are easier to tap accurately than a
+     wrapped row of differently-sized pills on a phone screen. */
+  .tabs { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .tabs button { width: 100%; }
 }
 
 /* ---------- TOEFL sections: passage/audio, timer, recorder, writing ---------- */

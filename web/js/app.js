@@ -316,7 +316,13 @@ function watchCandidates() {
     const list = [];
     snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
     list.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
-    setState({ candidates: list });
+    setState({ candidates: list, candidatesLoadError: null });
+  }, (err) => {
+    // Previously silent — a permission-denied here (e.g. Firestore rules
+    // not yet republished with the coadmin's current permissions) just
+    // left the candidate list empty forever with zero indication why.
+    console.error("watchCandidates failed", err);
+    setState({ candidates: [], candidatesLoadError: err.message });
   });
 }
 
@@ -1104,6 +1110,9 @@ function renderCandidatesTab() {
   let visible = state.candidates.filter((c) => showRemoved ? c.deleted : !c.deleted);
 
   const wrap = el(`<div></div>`);
+  if (state.candidatesLoadError) {
+    wrap.appendChild(el(`<div class="card err">${L("candidatesLoadErrorPrefix")}: ${escapeHtml(state.candidatesLoadError)}</div>`));
+  }
   if (!showRemoved) wrap.appendChild(renderDashboardStats(visible));
 
   const filterStatus = state.candidateFilterStatus || "all";
@@ -1118,11 +1127,13 @@ function renderCandidatesTab() {
 
   const toolbar = el(`
     <div>
-      <button id="new-cand-btn" class="primary">${L("createCandidate")}</button>
-      <button id="toggle-removed-btn" class="ghost">${showRemoved ? L("candidates") : L("removedCandidates")}</button>
-      ${state.profile.role === "admin" ? `<button id="reset-all-exams-btn" class="ghost danger">${L("resetAllExamsBtn")}</button>` : ""}
-      ${state.profile.role === "admin" ? `<button id="new-exam-all-btn" class="ghost">${L("newExamAllBtn")}</button>` : ""}
-      ${ADMIN_SERVER_URL ? `<button id="sync-all-leaderboard-btn" class="ghost">${L("syncLeaderboardAllBtn")}</button>` : ""}
+      <div class="row-actions">
+        <button id="new-cand-btn" class="primary">${L("createCandidate")}</button>
+        <button id="toggle-removed-btn" class="ghost">${showRemoved ? L("candidates") : L("removedCandidates")}</button>
+        ${state.profile.role === "admin" ? `<button id="reset-all-exams-btn" class="ghost danger">${L("resetAllExamsBtn")}</button>` : ""}
+        ${state.profile.role === "admin" ? `<button id="new-exam-all-btn" class="ghost">${L("newExamAllBtn")}</button>` : ""}
+        ${ADMIN_SERVER_URL ? `<button id="sync-all-leaderboard-btn" class="ghost">${L("syncLeaderboardAllBtn")}</button>` : ""}
+      </div>
       <div id="new-cand-form"></div>
       <div class="row-actions" style="margin:12px 0">
         <select id="filter-status">
