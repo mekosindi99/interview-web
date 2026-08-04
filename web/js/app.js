@@ -3145,19 +3145,22 @@ async function submitExam(activeQs) {
   // Recorded so staff can see it — deliberately not fed into the score
   // itself (see candidate table below), just shown alongside it.
   const durationSec = examStartedAtMs ? Math.max(0, Math.round((Date.now() - examStartedAtMs) / 1000)) : null;
-  // An exam with no speaking/writing questions has nothing left for an
-  // admin to grade — it was previously always left at "submitted" (a
-  // leftover dead `hasManual ? "submitted" : "submitted"` ternary), which
-  // meant it could never reach "graded" through any action at all, and so
-  // never got published to the public leaderboard either (that only fires
-  // from the admin's manual-grading save).
-  const finalStatus = hasManual ? "submitted" : "graded";
+  // Always "submitted", never "graded" — firestore.rules deliberately
+  // forbids a candidate from ever writing examStatus 'graded' on their own
+  // attempt, so writing it here made submitExam fail outright with
+  // permission-denied for any exam with no speaking/writing questions (i.e.
+  // every reading-only exam): the attempt never saved, the exam never
+  // ended, and the candidate was stuck on the last question forever.
+  // Promotion to "graded" for an exam with nothing left to grade is the
+  // admin server's job — /leaderboard/sync/:uid (called just below when
+  // !hasManual) does exactly that via the Admin SDK, which bypasses rules,
+  // and derives the score from this doc rather than trusting the client.
   await setDoc(doc(db, "attempts", state.profile.id), {
     answers: examLocalAnswers,
     manualAnswers: examManualAnswers,
     autoScore, manualScore: 0, totalPoints, sectionScores,
     score: autoScore,
-    examStatus: finalStatus,
+    examStatus: "submitted",
     needsManualGrading: hasManual,
     submittedAt: serverTimestamp(),
     durationSec,
