@@ -111,6 +111,19 @@ function fmtFileSize(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+// Manually built "YYYY/MM/DD HH:MM" instead of Date#toLocaleString(ar-IQ...).
+// The locale formatter embeds invisible right-to-left mark characters in
+// its output (Arabic locales assume RTL display even when -u-nu-latn forces
+// Western digits) — those interact with the page's own RTL direction and
+// scramble the visual order of the date segments no matter what CSS
+// bidi-isolation is applied around it (tried, still broken). Building the
+// string by hand with plain digits/slashes/colons has no such marks, so it
+// can never scramble regardless of surrounding direction.
+function fmtDateTime(date) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 // A small "uploaded file" card (icon + name + size/date meta line) —
 // the polished-app style the admin asked for, instead of a bare filename.
 // Candidate's own login credentials (name/phone/password), laid out as
@@ -151,10 +164,9 @@ function renderCredentialsCard(p) {
 // + meta line), for the image-pages count instead of just a bare hint —
 // per request, so both format cards show their status the same way.
 function renderImagesInfoCard(m, lang) {
-  const localeMap = { ar: "ar-IQ-u-nu-latn", ku: "en-GB", en: "en-US" };
   const dateStr = m.imagesUpdatedAt?.seconds
-    ? new Date(m.imagesUpdatedAt.seconds * 1000).toLocaleString(localeMap[lang])
-    : m.imagesUpdatedAtMs ? new Date(m.imagesUpdatedAtMs).toLocaleString(localeMap[lang]) : "";
+    ? fmtDateTime(new Date(m.imagesUpdatedAt.seconds * 1000))
+    : m.imagesUpdatedAtMs ? fmtDateTime(new Date(m.imagesUpdatedAtMs)) : "";
   return el(`
     <div class="file-info-card">
       <div class="file-info-icon">🖼️</div>
@@ -167,12 +179,9 @@ function renderImagesInfoCard(m, lang) {
 }
 
 function renderFileInfoCard(m, lang) {
-  // -u-nu-latn: keep Arabic date/time formatting but force Western digits
-// (0-9) instead of Eastern Arabic-Indic numerals (٠-٩) everywhere in the app.
-const localeMap = { ar: "ar-IQ-u-nu-latn", ku: "en-GB", en: "en-US" };
   const dateStr = m.updatedAt?.seconds
-    ? new Date(m.updatedAt.seconds * 1000).toLocaleString(localeMap[lang])
-    : m.updatedAtMs ? new Date(m.updatedAtMs).toLocaleString(localeMap[lang]) : "";
+    ? fmtDateTime(new Date(m.updatedAt.seconds * 1000))
+    : m.updatedAtMs ? fmtDateTime(new Date(m.updatedAtMs)) : "";
   const meta = [fmtFileSize(m.fileSize), dateStr].filter(Boolean).join(" · ");
   return el(`
     <div class="file-info-card">
@@ -1425,7 +1434,6 @@ async function newExamAllBulk(btn) {
 
 function renderCandidateHistoryPanel(c) {
   const wrap = el(`<div class="card"><h3>${escapeHtml(c.name)} — ${L("examHistory")}</h3><div id="history-body">${L("loading")}</div></div>`);
-  const localeMap = { ar: "ar-IQ-u-nu-latn", ku: "en-GB", en: "en-US" };
   getDocs(query(collection(db, "users", c.id, "pastAttempts"), orderBy("archivedAt", "desc"))).then((snap) => {
     const body = wrap.querySelector("#history-body");
     body.innerHTML = "";
@@ -1433,7 +1441,7 @@ function renderCandidateHistoryPanel(c) {
     snap.forEach((d) => {
       const a = d.data();
       const total = (a.autoScore ?? a.score ?? 0) + (a.manualScore ?? 0);
-      const archivedStr = a.archivedAt?.seconds ? new Date(a.archivedAt.seconds * 1000).toLocaleString(localeMap[state.lang]) : "—";
+      const archivedStr = a.archivedAt?.seconds ? fmtDateTime(new Date(a.archivedAt.seconds * 1000)) : "—";
       body.appendChild(el(`
         <div class="history-card">
           <div class="history-card-score">${total} / ${a.totalPoints ?? 0}</div>
@@ -1449,9 +1457,6 @@ const DEVICE_TYPE_KEY = { mobile: "deviceTypeMobile", tablet: "deviceTypeTablet"
 
 function renderCandidateDevicesPanel(c) {
   const wrap = el(`<div class="card"><h3>${escapeHtml(c.name)} — ${L("viewDevices")}</h3><div id="devices-body">${L("loading")}</div></div>`);
-  // -u-nu-latn: keep Arabic date/time formatting but force Western digits
-// (0-9) instead of Eastern Arabic-Indic numerals (٠-٩) everywhere in the app.
-const localeMap = { ar: "ar-IQ-u-nu-latn", ku: "en-GB", en: "en-US" };
   getDocs(collection(db, "users", c.id, "loginDevices")).then((snap) => {
     const body = wrap.querySelector("#devices-body");
     body.innerHTML = "";
@@ -1473,7 +1478,7 @@ const localeMap = { ar: "ar-IQ-u-nu-latn", ku: "en-GB", en: "en-US" };
     `);
     const tbody = tableWrap.querySelector("tbody");
     list.forEach((d) => {
-      const lastStr = d.lastSeenAt?.seconds ? new Date(d.lastSeenAt.seconds * 1000).toLocaleString(localeMap[state.lang]) : "—";
+      const lastStr = d.lastSeenAt?.seconds ? fmtDateTime(new Date(d.lastSeenAt.seconds * 1000)) : "—";
       tbody.appendChild(el(`
         <tr>
           <td>${L(DEVICE_TYPE_KEY[d.deviceType] || "deviceTypeDesktop")}</td>
@@ -2020,9 +2025,6 @@ function renderMaterialAdminTab() {
     grid.innerHTML = "";
     const uids = Object.keys(byUid);
     if (!uids.length) { grid.innerHTML = `<p class="hint">${L("neverRead")}</p>`; return; }
-    // -u-nu-latn: keep Arabic date/time formatting but force Western digits
-    // (0-9) instead of Eastern Arabic-Indic numerals (٠-٩) everywhere in the app.
-    const localeMap = { ar: "ar-IQ-u-nu-latn", ku: "en-GB", en: "en-US" };
     // Total page count, when known (image mode only — a PDF's page count
     // isn't stored anywhere), to show "21/21" instead of a bare number.
     const totalPages = Array.isArray(state.material?.images) ? state.material.images.length : null;
@@ -2031,7 +2033,7 @@ function renderMaterialAdminTab() {
     sorted.forEach((g) => {
       const cand = state.candidates.find((c) => c.id === g.uid);
       const name = cand?.name || g.name || g.uid;
-      const lastStr = g.lastAt ? new Date(g.lastAt * 1000).toLocaleString(localeMap[state.lang]) : "—";
+      const lastStr = g.lastAt ? fmtDateTime(new Date(g.lastAt * 1000)) : "—";
       const pageStr = totalPages ? `${g.maxPage}/${totalPages}` : `${g.maxPage}`;
       grid.appendChild(el(`
         <div class="cand-card material-stat-card">
@@ -3034,9 +3036,6 @@ function renderResult() {
       console.warn("material thumbnail failed", err);
     }
   })();
-  // -u-nu-latn: keep Arabic date/time formatting but force Western digits
-  // (0-9) instead of Eastern Arabic-Indic numerals (٠-٩) everywhere in the app.
-  const localeMap = { ar: "ar-IQ-u-nu-latn", ku: "en-GB", en: "en-US" };
   wrap.querySelector("#cred-card-host").appendChild(renderCredentialsCard(p));
   getDoc(doc(db, "attempts", p.id)).then((snap) => {
     if (!snap.exists()) return;
@@ -3045,7 +3044,7 @@ function renderResult() {
     const pendingManual = a.needsManualGrading && !graded;
     const total = (a.autoScore ?? a.score ?? 0) + (a.manualScore ?? 0);
     const submittedStr = a.submittedAt?.seconds
-      ? new Date(a.submittedAt.seconds * 1000).toLocaleString(localeMap[state.lang])
+      ? fmtDateTime(new Date(a.submittedAt.seconds * 1000))
       : "—";
     wrap.querySelector("#exam-meta").innerHTML = infoGridHtml([
       { label: L("status"), value: L(EXAM_STATUS_KEY[a.examStatus] || "submitted") },
