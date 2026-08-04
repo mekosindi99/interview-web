@@ -1312,7 +1312,7 @@ function renderCandidatesTab() {
         ${state.profile.role === "admin" ? `<button id="new-exam-all-btn" class="ghost">${L("newExamAllBtn")}</button>` : ""}
         ${ADMIN_SERVER_URL ? `<button id="sync-all-leaderboard-btn" class="ghost">${L("syncLeaderboardAllBtn")}</button>` : ""}
       </div>
-      <div class="card" id="candidate-setup-card">
+      <div class="card" id="candidate-setup-card" style="display:none">
         <div id="new-cand-form"></div>
         <div id="profile-fields-host"></div>
       </div>
@@ -1340,17 +1340,27 @@ function renderCandidatesTab() {
   toolbar.querySelector("#filter-status").onchange = (e) => setState({ candidateFilterStatus: e.target.value });
   toolbar.querySelector("#sort-by").onchange = (e) => setState({ candidateSortBy: e.target.value });
   wrap.appendChild(toolbar);
-  toolbar.querySelector("#new-cand-btn").onclick = () => {
+  // Tied to the act of creating a candidate, not shown as a standing
+  // settings panel — the whole card starts hidden (see its style="display:
+  // none" above) and only opens when an admin clicks "إنشاء حساب متقدم".
+  const setupCard = toolbar.querySelector("#candidate-setup-card");
+  const openCandidateSetup = () => {
+    setupCard.style.display = "";
+    const fieldsHost = toolbar.querySelector("#profile-fields-host");
     const formHost = toolbar.querySelector("#new-cand-form");
     formHost.innerHTML = "";
-    formHost.appendChild(renderNewCandidateForm());
+    // Once the account is actually created, the profile-fields toggles have
+    // done their job for this session — they only needed to be visible while
+    // the admin was mid-setup, not as a permanent settings panel. The
+    // account form itself stays up (its own success message, with the new
+    // phone/code the admin still needs to copy, lives inside it).
+    formHost.appendChild(renderNewCandidateForm(() => { fieldsHost.innerHTML = ""; }));
+    if (state.profile.role === "admin") {
+      fieldsHost.innerHTML = "";
+      fieldsHost.appendChild(renderProfileFieldsForm());
+    }
   };
-  // Same place as candidate creation itself — both are about what happens
-  // when a new candidate account is set up, so they belong together
-  // instead of one being tucked away in Exam Settings.
-  if (state.profile.role === "admin" && !showRemoved) {
-    toolbar.querySelector("#profile-fields-host").appendChild(renderProfileFieldsForm());
-  }
+  toolbar.querySelector("#new-cand-btn").onclick = openCandidateSetup;
   toolbar.querySelector("#toggle-removed-btn").onclick = () => setState({ showRemovedCandidates: !showRemoved });
   const resetAllBtn = toolbar.querySelector("#reset-all-exams-btn");
   if (resetAllBtn) resetAllBtn.onclick = resetAllExamsBulk;
@@ -1835,7 +1845,7 @@ function renderCandidateResultPanel(c) {
   return wrap;
 }
 
-function renderNewCandidateForm() {
+function renderNewCandidateForm(onCreated) {
   const wrap = el(`
     <form id="cand-form">
       <h3>${L("createCandidate")}</h3>
@@ -1895,6 +1905,7 @@ function renderNewCandidateForm() {
         <div class="notice">${L("accountCreated")}<br><b>${escapeHtml(phone)}</b> / <b>${escapeHtml(code)}</b></div>
       `;
       e.target.reset();
+      if (onCreated) onCreated();
     } catch (err) {
       if (err.code === "auth/email-already-in-use") {
         errBox.textContent = L("phoneOrphaned");
