@@ -3277,7 +3277,7 @@ function buildLeaderboardCard() {
       <div class="table-scroll">
         <table class="grid leaderboard-table" dir="ltr">
           <thead><tr>
-            <th>#</th><th>${L("name")}</th><th>${L("phone")}</th>
+            <th>#</th><th class="leaderboard-name">${L("name")}</th><th>${L("phone")}</th>
             ${sectionCols.map((s) => `<th>${L(s)}</th>`).join("")}
             <th>${L("total")}</th><th>${L("timeTaken")}</th>
             ${acceptCount ? `<th>${L("admissionStatus")}</th>` : ""}

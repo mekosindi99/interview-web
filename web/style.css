@@ -320,9 +320,17 @@ table.grid th { background: #fafafa; color: var(--muted); font-weight: 600; }
    in an RTL page. */
 .mono { font-family: "Courier New", monospace; letter-spacing: .5px; direction: ltr; unicode-bidi: isolate; }
 
-.leaderboard-table th { text-align: center; }
-.leaderboard-table td { text-align: center; }
-.leaderboard-table td.leaderboard-name { text-align: start; font-weight: 700; }
+/* Qualified with table.grid so these beat the generic `table.grid th, table.grid td`
+   rule above, which is more specific than a bare `.leaderboard-table th` and was
+   silently winning — that's why the headers stayed start-aligned while the values
+   below them didn't, so no column's heading sat over its own numbers. Header and
+   cell are centered together per column, and the name column opts both of them out
+   to start alignment as a pair, so the two can't drift apart again. */
+table.grid.leaderboard-table th,
+table.grid.leaderboard-table td { text-align: center; vertical-align: middle; }
+table.grid.leaderboard-table th.leaderboard-name,
+table.grid.leaderboard-table td.leaderboard-name { text-align: start; }
+table.grid.leaderboard-table td.leaderboard-name { font-weight: 700; }
 .leaderboard-rank { font-size: 17px; font-weight: 800; color: var(--muted); }
 .leaderboard-total { font-size: 17px; font-weight: 800; color: var(--primary); }
 .leaderboard-table tbody tr:nth-child(even) { background: var(--bg); }
