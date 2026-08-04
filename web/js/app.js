@@ -122,18 +122,18 @@ function fmtFileSize(bytes) {
 // way. Tiles only render for fields that actually have a value (e.g. no
 // password tile if the profile has none), same auto-hide behavior as the
 // section-score grid already had.
+// Plain stacked "key : value" rows, each on its own line, label and value
+// facing each other — the grid-of-tiles version wrapped awkwardly (a phone
+// number or "تم التصحيح" squeezed into a narrow tile), so this went back
+// to the simpler list layout instead.
 function infoGridHtml(tiles) {
   const shown = tiles.filter((t) => t.value != null && t.value !== "");
-  return `
-    <div class="info-grid">
-      ${shown.map((t) => `
-        <div class="info-tile">
-          <div class="info-tile-lbl">${escapeHtml(t.label)}</div>
-          <div class="info-tile-val ${t.mono ? "mono" : ""}">${escapeHtml(String(t.value))}</div>
-        </div>
-      `).join("")}
+  return shown.map((t) => `
+    <div class="cred-row">
+      <span class="cred-label">${escapeHtml(t.label)}</span>
+      <span class="cred-value ${t.mono ? "mono" : ""}">${escapeHtml(String(t.value))}</span>
     </div>
-  `;
+  `).join("");
 }
 function infoGridCard(extraClass, tiles) {
   return el(`<div class="card ${extraClass || ""}">${infoGridHtml(tiles)}</div>`);
