@@ -2270,22 +2270,32 @@ function renderMaterialAdminTab() {
     });
     const grid = statsHost.querySelector("#material-stats-rows");
     grid.innerHTML = "";
-    const uids = Object.keys(byUid);
-    if (!uids.length) { grid.innerHTML = `<p class="hint">${L("neverRead")}</p>`; return; }
+    // Every candidate gets a card, not just the ones with a session on record.
+    // Listing only readers made a non-reader indistinguishable from a
+    // candidate who didn't exist — the absence of a card carried the
+    // information, so you had to cross-check against the candidates tab to
+    // notice anyone was missing. A zeroed card states it outright.
+    const roster = state.candidates.filter((c) => !c.deleted && c.role === "candidate");
+    if (!roster.length) { grid.innerHTML = `<p class="hint">${L("neverRead")}</p>`; return; }
     // Total page count, when known (image mode only — a PDF's page count
     // isn't stored anywhere), to show "21/21" instead of a bare number.
     const totalPages = Array.isArray(state.material?.images) ? state.material.images.length : null;
-    // Ranked by total reading time — the most engaged reader's card leads.
-    const sorted = uids.map((uid) => ({ uid, ...byUid[uid] })).sort((a, b) => b.totalSec - a.totalSec);
+    // Readers first, ranked by total reading time, then everyone who never
+    // opened it — so the cards worth looking at are never buried under zeros.
+    const sorted = roster
+      .map((c) => ({ uid: c.id, name: c.name, sessions: 0, totalSec: 0, maxPage: 0, lastAt: 0, ...byUid[c.id] }))
+      .sort((a, b) => b.totalSec - a.totalSec || b.sessions - a.sessions);
     sorted.forEach((g) => {
       const cand = state.candidates.find((c) => c.id === g.uid);
       const name = cand?.name || g.name || g.uid;
+      const hasRead = g.sessions > 0;
       const lastStr = g.lastAt ? fmtDateTime(new Date(g.lastAt * 1000)) : "—";
       const pageStr = totalPages ? `${g.maxPage}/${totalPages}` : `${g.maxPage}`;
       grid.appendChild(el(`
-        <div class="cand-card material-stat-card">
+        <div class="cand-card material-stat-card ${hasRead ? "material-stat-read" : "material-stat-unread"}">
           <div class="cand-card-head">
-            <div class="cand-card-name">📖 ${escapeHtml(name)}</div>
+            <div class="cand-card-name">${hasRead ? "📖" : "🚫"} ${escapeHtml(name)}</div>
+            <span class="status-badge ${hasRead ? "graded" : ""}">${hasRead ? L("didRead") : L("neverReadBadge")}</span>
           </div>
           <div class="stat-row">
             <div class="stat-box"><div class="stat-num">${g.sessions}</div><div class="stat-lbl">${L("sessionsCount")}</div></div>

@@ -308,6 +308,27 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .stat-lbl { font-size: 12px; color: var(--muted); margin-top: 2px; }
 .material-stat-lastread { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--border); font-size: 13px; }
 
+/* Everyone gets a card now, so the two states have to be separable at a
+   glance rather than by reading the numbers on each one. A reader's card is
+   outlined and gently pulses; a non-reader's is dimmed and flat, and its
+   zeros are muted so they don't compete for attention with real figures. */
+.material-stat-read {
+  outline: 2px solid var(--ok);
+  outline-offset: -2px;
+  animation: material-stat-glow 1.8s ease-in-out infinite;
+}
+@keyframes material-stat-glow {
+  0%, 100% { box-shadow: 0 0 0 transparent; }
+  50% { box-shadow: 0 0 10px color-mix(in srgb, var(--ok) 55%, transparent); }
+}
+.material-stat-unread { opacity: .72; }
+.material-stat-unread .stat-num { color: var(--muted); }
+/* Respects a reduced-motion preference — the outline alone still separates
+   the two states, so nothing is lost by dropping the pulse. */
+@media (prefers-reduced-motion: reduce) {
+  .material-stat-read { animation: none; }
+}
+
 .score-chart { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 .score-chart-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
 .score-chart-lbl { width: 64px; color: var(--muted); flex-shrink: 0; }
