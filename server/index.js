@@ -265,6 +265,23 @@ app.post("/leaderboard/sync/:uid", requireSelfOrAdmin("uid"), async (req, res) =
   }
 });
 
+// Removes one candidate's board entry outright — used when an admin resets
+// their exam ("امتحان جديد"). /leaderboard/sync/:uid can't do this job: it
+// republishes by reading attempts/{uid}, but performExamReset (app.js)
+// deletes that very doc as part of the reset, so calling sync afterward
+// 404s instead of clearing the stale entry. leaderboard/{uid} is
+// client-write-disabled (see firestore.rules), so this has to go through
+// the server the same as every other write to that collection.
+app.delete("/leaderboard/:uid", requireAdmin, async (req, res) => {
+  try {
+    await db.collection("leaderboard").doc(req.params.uid).delete();
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("leaderboard entry delete failed", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Drops every board entry whose candidate is gone (profile permanently
 // deleted) or in the trash (deleted: true).
 //

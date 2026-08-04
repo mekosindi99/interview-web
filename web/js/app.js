@@ -1293,16 +1293,6 @@ function renderCandidatesTab() {
   }
   if (!showRemoved) wrap.appendChild(renderDashboardStats(visible));
 
-  const filterStatus = state.candidateFilterStatus || "all";
-  const sortBy = state.candidateSortBy || "recent";
-  if (filterStatus !== "all") visible = visible.filter((c) => (c.examStatus || "not_started") === filterStatus);
-  const durationOf = (c) => state.attempts[c.id]?.durationSec ?? Infinity;
-  if (sortBy === "nameAsc") visible = [...visible].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-  else if (sortBy === "scoreDesc") visible = [...visible].sort((a, b) => candidateScoreFraction(b) - candidateScoreFraction(a));
-  else if (sortBy === "scoreAsc") visible = [...visible].sort((a, b) => candidateScoreFraction(a) - candidateScoreFraction(b));
-  else if (sortBy === "durationAsc") visible = [...visible].sort((a, b) => durationOf(a) - durationOf(b));
-  // "recent" (default) keeps watchCandidates()'s own createdAt-desc order.
-
   const toolbar = el(`
     <div>
       <div class="row-actions">
@@ -1316,29 +1306,9 @@ function renderCandidatesTab() {
         <div id="new-cand-form"></div>
         <div id="profile-fields-host"></div>
       </div>
-      <div class="row-actions" style="margin:12px 0">
-        <select id="filter-status">
-          <option value="all">${L("filterAll")}</option>
-          <option value="not_started">${L("notStarted")}</option>
-          <option value="in_progress">${L("inProgress")}</option>
-          <option value="submitted">${L("submitted")}</option>
-          <option value="graded">${L("graded")}</option>
-        </select>
-        <select id="sort-by">
-          <option value="recent">${L("sortRecent")}</option>
-          <option value="nameAsc">${L("sortNameAsc")}</option>
-          <option value="scoreDesc">${L("sortScoreDesc")}</option>
-          <option value="scoreAsc">${L("sortScoreAsc")}</option>
-          <option value="durationAsc">${L("sortDurationAsc")}</option>
-        </select>
-      </div>
       <div class="cand-card-grid" id="cand-rows"></div>
     </div>
   `);
-  toolbar.querySelector("#filter-status").value = filterStatus;
-  toolbar.querySelector("#sort-by").value = sortBy;
-  toolbar.querySelector("#filter-status").onchange = (e) => setState({ candidateFilterStatus: e.target.value });
-  toolbar.querySelector("#sort-by").onchange = (e) => setState({ candidateSortBy: e.target.value });
   wrap.appendChild(toolbar);
   // Tied to the act of creating a candidate, not shown as a standing
   // settings panel — the whole card starts hidden (see its style="display:
@@ -1621,6 +1591,22 @@ async function performExamReset(c) {
     examSectionDeadline: deleteField(), examStartedAtMs: deleteField(),
     examSelectedQuestionIds: deleteField(),
   });
+  // The old exam's score otherwise stays visible on the public board
+  // forever: /leaderboard/sync/:uid republishes by reading attempts/{uid},
+  // which this function just deleted, so calling it after a reset just
+  // 404s instead of clearing the stale entry — a dedicated delete is the
+  // only thing that can take it down. Best-effort: the reset itself already
+  // succeeded above regardless of whether this does.
+  if (ADMIN_SERVER_URL) {
+    try {
+      const token = await state.user.getIdToken();
+      await fetch(`${ADMIN_SERVER_URL}/leaderboard/${c.id}`, {
+        method: "DELETE", headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch (err) {
+      console.warn("leaderboard entry cleanup failed", err);
+    }
+  }
 }
 async function resetCandidateExam(c) {
   if (!confirm(L("newExamConfirm", { name: c.name }))) return;
