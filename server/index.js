@@ -265,6 +265,32 @@ app.post("/leaderboard/sync/:uid", requireSelfOrAdmin("uid"), async (req, res) =
   }
 });
 
+// Drops every board entry whose candidate is gone (profile permanently
+// deleted) or in the trash (deleted: true).
+//
+// The per-candidate sync above can only ever be called for a candidate the
+// admin UI still lists, so a permanently deleted one was unreachable by
+// design: their profile is gone, they're absent from the candidates list, and
+// nothing was left anywhere in the app that could take their name and score
+// off the public board. This walks the board itself instead of the candidate
+// list, which is the only direction that can see those orphans.
+app.post("/leaderboard/prune", requireAdmin, async (req, res) => {
+  try {
+    const snap = await db.collection("leaderboard").get();
+    const removed = [];
+    for (const entryDoc of snap.docs) {
+      const userSnap = await db.collection("users").doc(entryDoc.id).get();
+      if (userSnap.exists && !userSnap.data().deleted) continue;
+      await entryDoc.ref.delete();
+      removed.push(entryDoc.id);
+    }
+    res.json({ ok: true, removed: removed.length, scanned: snap.size });
+  } catch (err) {
+    console.error("leaderboard prune failed", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Candidate's own speaking-answer recording — flat filename
 // speaking__{verifiedUid}__{qid}.webm, made link-readable, URL returned for
 // the client to store on the attempt doc.

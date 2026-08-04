@@ -1523,12 +1523,25 @@ async function syncAllLeaderboard(btn) {
   // by removing their board entry, which makes this button a repair tool for
   // any stale entry left behind — not just a publisher for live candidates.
   const candidates = state.candidates.filter((c) => ["submitted", "graded"].includes(c.examStatus));
-  if (!candidates.length) { alert(L("syncLeaderboardAllNone")); return; }
   btn.disabled = true;
   const originalText = btn.textContent;
   let published = 0;
+  let removed = 0;
   try {
     const token = await state.user.getIdToken();
+    // Prune first, walking the board itself rather than the candidate list.
+    // A permanently deleted candidate is absent from state.candidates, so the
+    // per-candidate loop below can never reach their stale entry — pruning is
+    // the only thing that can take it down.
+    try {
+      const res = await fetch(`${ADMIN_SERVER_URL}/leaderboard/prune`, {
+        method: "POST", headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = await res.json().catch(() => ({}));
+      if (res.ok) removed = body.removed || 0;
+    } catch (err) {
+      console.warn("leaderboard prune failed", err);
+    }
     for (const c of candidates) {
       btn.textContent = L("syncLeaderboardAllProgress", { done: published, total: candidates.length });
       try {
@@ -1541,7 +1554,7 @@ async function syncAllLeaderboard(btn) {
         console.warn(`leaderboard sync failed for candidate ${c.id}`, err);
       }
     }
-    alert(L("syncLeaderboardAllDone", { published, total: candidates.length }));
+    alert(L("syncLeaderboardAllDone", { published, total: candidates.length, removed }));
   } finally {
     btn.textContent = originalText;
     btn.disabled = false;
