@@ -73,8 +73,6 @@ async function uploadToDrive({ name, mimeType, buffer, isPublic = false }) {
   }
   return fileId;
 }
-const driveDirectUrl = (fileId) => `https://drive.google.com/uc?export=download&id=${fileId}`;
-
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:5173,https://interview.sonbola.shop")
   .split(",").map((s) => s.trim());
 
@@ -346,17 +344,25 @@ app.post("/uploads/cv", requireSignedIn, upload.single("file"), async (req, res)
   }
 });
 
-// Listening-section prompt audio — admin only. Not personal data (same
-// admin-authored clip every candidate hears), so it's fine left publicly
-// link-readable — the client plays it directly via <audio src>.
+// Listening-section prompt audio — admin only. Used to be uploaded
+// isPublic:true with the client playing a raw Drive "uc?export=download"
+// link straight in an <audio src>, the same shape as the old material-PDF
+// link. Same failure mode as that one: that URL doesn't reliably serve raw
+// audio bytes — it can hand back an HTML interstitial instead, which an
+// <audio> tag can't parse, so playback silently showed 0:00/0:00 and never
+// started. Now private on Drive, streamed only through the authenticated
+// GET /audio/:fileId proxy below (same one speaking-answer playback already
+// uses), which fetches the real bytes server-side and sets the correct
+// Content-Type — reliable regardless of what Drive's direct-link endpoint
+// does on a given request.
 app.post("/uploads/listening", requireAdmin, upload.single("file"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "no file" });
     const fileId = await uploadToDrive({
       name: `listening__${Date.now()}__${req.file.originalname}`,
-      mimeType: req.file.mimetype || "audio/mpeg", buffer: req.file.buffer, isPublic: true,
+      mimeType: req.file.mimetype || "audio/mpeg", buffer: req.file.buffer,
     });
-    res.json({ url: driveDirectUrl(fileId), fileId });
+    res.json({ fileId });
   } catch (err) {
     console.error("listening upload failed", err);
     res.status(500).json({ error: err.message });

@@ -65,6 +65,12 @@ async function getSpeakingAudioUrl(ans) {
 function wireSpeakingAudio(audioEl, ans) {
   getSpeakingAudioUrl(ans).then((url) => { if (url) audioEl.src = url; }).catch(() => {});
 }
+// Same authenticated-proxy playback as speaking answers, for a listening
+// question's own prompt clip — keyed directly by fileId rather than an
+// {audioUrl}-shaped answer object.
+function wireQuestionAudio(audioEl, fileId) {
+  getSpeakingAudioUrl({ fileId }).then((url) => { if (url) audioEl.src = url; }).catch(() => {});
+}
 // Explicit local persistence: keep the session in this browser across tab
 // closes / restarts, so the login screen isn't shown again on the same
 // device until the user explicitly signs out.
@@ -2592,10 +2598,12 @@ function renderQuestionsTab() {
           <div class="q-head"><span class="tag">${L(q.category)}</span> <span class="tag">${L(q.type)}</span> ${q.active === false ? `<span class="tag warn">${L("inactive")}</span>` : ""}</div>
           <div class="q-text">${i + 1}. ${escapeHtml(q.text?.[state.lang] || q.text?.ar || "")}</div>
           ${q.imagePath ? `<img class="q-thumb" src="${q.imagePath}" />` : ""}
+          ${q.audioFileId ? `<audio class="q-audio" id="q-bank-audio-${q.id}" controls></audio>` : ""}
           <div class="q-answer">${answerPreview(q)}</div>
           <div id="q-edit-host-${q.id}"></div>
         </div>
       `);
+      if (q.audioFileId) wireQuestionAudio(card.querySelector(`#q-bank-audio-${q.id}`), q.audioFileId);
       if (isAdmin) {
         const actions = el(`<div class="row-actions"></div>`);
         const editBtn = el(`<button class="link">${L("edit")}</button>`);
@@ -2645,9 +2653,14 @@ function renderQuestionForm(existing) {
     "image14.jpeg","image16.jpeg","image17.jpeg","image18.jpeg","image20.png","image21.png",
     "image22.png","image23.jpeg","image24.jpeg","image25.jpeg","image26.jpeg","image27.jpeg",
   ];
-  // Listening audio is uploaded immediately on file select (Storage), then
-  // referenced by URL on submit — keeps the upload out of the form-submit path.
-  let pendingAudioPath = existing?.audioPath || "";
+  // Listening audio is uploaded immediately on file select, then referenced
+  // by its Drive fileId on submit — keeps the upload out of the form-submit
+  // path. fileId, not a URL: playback goes through the authenticated
+  // GET /audio/:fileId proxy (see wireQuestionAudio below), not a direct
+  // Drive link — that link intermittently serves an HTML interstitial
+  // instead of the actual audio bytes, which is what made listening
+  // playback show 0:00/0:00 and never start.
+  let pendingAudioFileId = existing?.audioFileId || "";
   const wrap = el(`
     <form id="new-q-form" class="card">
       <label>${L("questionType")}
@@ -2672,8 +2685,13 @@ function renderQuestionForm(existing) {
           <option value="ku">${L("displayLangKu")}</option>
         </select>
       </label>
-      <label>${L("questionTextAr")}<input name="text_ar" required value="${escapeHtml(existing?.text?.ar || "")}" /></label>
-      <label>${L("questionTextKu")}<input name="text_ku" value="${escapeHtml(existing?.text?.ku || "")}" /></label>
+      <!-- Hidden for section=listening (see sectionSel.onchange below): the
+           audio clip itself is the question there — showing a text version
+           next to it would let a candidate answer from reading it instead of
+           actually understanding the spoken Arabic, which defeats the
+           section's whole purpose. -->
+      <label id="text-ar-label">${L("questionTextAr")}<input name="text_ar" required value="${escapeHtml(existing?.text?.ar || "")}" /></label>
+      <label id="text-ku-label">${L("questionTextKu")}<input name="text_ku" value="${escapeHtml(existing?.text?.ku || "")}" /></label>
       <div id="type-extra"></div>
       <div class="err" id="q-err"></div>
       <button type="submit" class="primary">${L("save")}</button>
@@ -2689,10 +2707,26 @@ function renderQuestionForm(existing) {
     wrap.querySelector("[name=displayLang]").value = existing.displayLang || "";
   }
   wireAutoFill(wrap.querySelector("[name=text_ar]"), wrap.querySelector("[name=text_ku]"));
+  const textArLabel = wrap.querySelector("#text-ar-label");
+  const textKuLabel = wrap.querySelector("#text-ku-label");
+  const textArInput = wrap.querySelector("[name=text_ar]");
+  const textKuInput = wrap.querySelector("[name=text_ku]");
   function renderExtra() {
     extra.innerHTML = "";
     const type = typeSel.value;
     const section = sectionSel.value;
+    const isListening = section === "listening" && (type === "mcq" || type === "truefalse");
+    textArLabel.style.display = isListening ? "none" : "";
+    textKuLabel.style.display = isListening ? "none" : "";
+    textArInput.required = !isListening;
+    if (isListening && !textArInput.value) {
+      // A placeholder, not shown to the candidate (the exam screen skips
+      // rendering q.text entirely for listening questions — see renderExam)
+      // — only exists so the admin's own question-bank list has something
+      // readable to identify the question by.
+      textArInput.value = L("listeningQuestionPlaceholder");
+      textKuInput.value = L("listeningQuestionPlaceholder");
+    }
     if (type === "speaking" || type === "writing") {
       extra.appendChild(el(`<p class="hint">${L("scoreOutOf", { max: POINTS_PER_QUESTION })} — ${L("manualGrading")}.</p>`));
       return;
@@ -2773,20 +2807,25 @@ function renderQuestionForm(existing) {
           <input type="file" name="audio_file" accept="audio/*" />
         </label>
       `);
-      const status = el(`<p class="hint" id="audio-status">${pendingAudioPath ? L("materialUploaded") : ""}</p>`);
+      const status = el(`<p class="hint" id="audio-status">${pendingAudioFileId ? L("materialUploaded") : ""}</p>`);
       audioWrap.querySelector("input").onchange = async (ev) => {
         const file = ev.target.files[0];
         if (!file) return;
         status.textContent = L("uploadingAudio");
         try {
-          const { url } = await uploadViaServer("/uploads/listening", file);
-          pendingAudioPath = url;
+          const { fileId } = await uploadViaServer("/uploads/listening", file);
+          pendingAudioFileId = fileId;
           status.textContent = L("materialUploaded");
         } catch (err) {
           status.textContent = err.message;
         }
       };
       extra.appendChild(audioWrap);
+      if (pendingAudioFileId) {
+        const preview = el(`<audio class="q-audio" controls></audio>`);
+        wireQuestionAudio(preview, pendingAudioFileId);
+        extra.appendChild(preview);
+      }
       extra.appendChild(status);
     }
   }
@@ -2823,14 +2862,14 @@ function renderQuestionForm(existing) {
       const pAr = f.get("passage_ar"), pKu = f.get("passage_ku");
       if (pAr || pKu) data.passage = { ar: pAr || "", ku: pKu || pAr || "" };
     }
-    if (data.section === "listening" && pendingAudioPath) data.audioPath = pendingAudioPath;
+    if (data.section === "listening" && pendingAudioFileId) data.audioFileId = pendingAudioFileId;
     try {
       if (existing) {
         await updateDoc(doc(db, "questions", existing.id), data);
       } else {
         await addDoc(collection(db, "questions"), data);
         e.target.reset();
-        pendingAudioPath = "";
+        pendingAudioFileId = "";
         renderExtra();
       }
     } catch (err) {
@@ -3066,8 +3105,12 @@ function renderExam() {
       </div>
       <div class="card q-card-big">
         ${q.passage?.[qLang(q)] || q.passage?.ar ? `<div class="passage">${escapeHtml(q.passage[qLang(q)] || q.passage.ar)}</div>` : ""}
-        ${q.audioPath ? `<audio class="q-audio" controls src="${q.audioPath}"></audio>` : ""}
-        <div class="q-text">${escapeHtml(q.text[qLang(q)] || q.text.ar)}</div>
+        ${q.audioFileId ? `<audio class="q-audio" id="q-audio-${q.id}" controls></audio>` : ""}
+        <!-- Skipped for an audio question: q.text there is only an internal
+             placeholder for the admin's own bank list (see renderQuestionForm),
+             not real question text — showing it would also let a candidate
+             answer from reading it instead of actually listening. -->
+        ${q.audioFileId ? "" : `<div class="q-text">${escapeHtml(q.text[qLang(q)] || q.text.ar)}</div>`}
         ${q.imagePath ? `<img class="q-image" src="${q.imagePath}" />` : ""}
         <div id="q-options"></div>
       </div>
@@ -3081,6 +3124,7 @@ function renderExam() {
       </div>
     </div>
   `);
+  if (q.audioFileId) wireQuestionAudio(wrap.querySelector(`#q-audio-${q.id}`), q.audioFileId);
 
   renderQuestionAnswerUI(wrap.querySelector("#q-options"), q);
 
