@@ -581,7 +581,32 @@ function render() {
   document.documentElement.dir = DIR[state.lang];
   root.innerHTML = "";
   root.appendChild(langSwitcher());
+  // Everything below can throw on some edge-case state combination — and
+  // when it does, the *symptom* is much worse than a visible error: since
+  // every button handler in this app ends with a synchronous render()
+  // call, an uncaught throw here aborts that render silently. The click
+  // still "worked" (the in-memory state already changed, and any Firestore
+  // write already fired before render() was reached), but the screen never
+  // updates to reflect it — indistinguishable from the app just not
+  // responding at all. Reported exactly that way: answering/advancing/
+  // submitting the exam "didn't save, didn't continue, didn't submit".
+  // Catching it here can't fix the underlying bug, but it turns "frozen
+  // with no clue why" into a visible, reportable error instead.
+  try {
+    renderMain();
+  } catch (err) {
+    console.error("render() failed", err);
+    root.appendChild(el(`
+      <div class="card center-card">
+        <h2>${L("error")}</h2>
+        <p class="err">${escapeHtml(err.message)}</p>
+        <button type="button" onclick="location.reload()">${L("reloadBtn")}</button>
+      </div>
+    `));
+  }
+}
 
+function renderMain() {
   if (state.route === "admin-setup") return root.appendChild(renderAdminSetup());
   if (!state.user) return root.appendChild(renderLogin());
 
@@ -595,8 +620,12 @@ function render() {
     // "getting stuck in a loop" instead of ever reaching the result
     // screen. Once a candidate has actually started, this never
     // interrupts them again regardless of profileCompleted's value.
-    const pf = state.examConfig.profileFields;
-    const anyFieldOn = PROFILE_FIELD_KEYS.some((k) => pf[k]);
+    // Optional chaining throughout: state.examConfig.profileFields should
+    // always be populated (mergeExamConfig guarantees it), but a render
+    // that throws here breaks the ENTIRE exam UI (see the try/catch this
+    // is now wrapped in) — cheap insurance against exactly that.
+    const pf = state.examConfig?.profileFields;
+    const anyFieldOn = PROFILE_FIELD_KEYS.some((k) => pf?.[k]);
     const examNotStarted = !state.profile.examStatus || state.profile.examStatus === "not_started";
     if (anyFieldOn && !state.profile.profileCompleted && examNotStarted) {
       root.appendChild(renderProfileIntakeForm());
@@ -2838,7 +2867,13 @@ function renderExam() {
   }
 
   if (state.profile.examStatus === "not_started") {
-    const wrap = el(`<div></div>`);
+    // Same .result-shell wrapper the result screen uses — without it, this
+    // screen's credentials card fell back to the old unboxed row style
+    // (the .result-shell .cred-row / .material-entry-card rules are scoped
+    // to that class specifically), which is why the styling work done on
+    // the result screen never showed up here even though it's the exact
+    // same renderCredentialsCard() call.
+    const wrap = el(`<div class="result-shell"></div>`);
     wrap.appendChild(renderCredentialsCard(state.profile));
     const actionsCard = el(`
       <div class="card center-card">
