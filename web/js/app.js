@@ -1670,18 +1670,15 @@ function renderAdmissionTab() {
   return wrap;
 }
 
+// Same card visual language as the candidate list (cand-card-grid /
+// cand-card / action-chip) instead of the old plain table — per explicit
+// request to make co-admin and candidate cards match.
 function renderCoadminsTab() {
-  const coadmins = state.candidates; // placeholder, replaced below by live query
   const wrap = el(`
     <div>
       <button id="new-coadmin-btn" class="primary">${L("addCoadmin")}</button>
       <div id="new-coadmin-form"></div>
-      <div class="table-scroll">
-        <table class="grid">
-          <thead><tr><th>${L("name")}</th><th>${L("phone")}</th><th>${L("password")}</th><th></th></tr></thead>
-          <tbody id="coadmin-rows"><tr><td colspan="4">${L("loading")}</td></tr></tbody>
-        </table>
-      </div>
+      <div class="cand-card-grid" id="coadmin-rows"><p class="hint">${L("loading")}</p></div>
       <div id="coadmin-devices-host"></div>
     </div>
   `);
@@ -1693,32 +1690,45 @@ function renderCoadminsTab() {
   getDocs(query(collection(db, "users"), where("role", "==", "coadmin"))).then((snap) => {
     const rows = wrap.querySelector("#coadmin-rows");
     rows.innerHTML = "";
-    if (snap.empty) { rows.innerHTML = `<tr><td colspan="4">—</td></tr>`; return; }
+    if (snap.empty) { rows.innerHTML = `<p class="hint">—</p>`; return; }
+    const devicesHost = wrap.querySelector("#coadmin-devices-host");
     snap.forEach((d) => {
       const c = { id: d.id, ...d.data() };
-      const tr = el(`<tr><td>${escapeHtml(c.name)}</td><td>${escapeHtml(c.phone || "")}</td><td class="mono">${escapeHtml(c.code || "—")}</td><td></td></tr>`);
+      const card = el(`
+        <div class="cand-card">
+          <div class="cand-card-head">
+            <div class="cand-card-name">${escapeHtml(c.name)}</div>
+          </div>
+          <div class="cand-card-creds">
+            <div class="cred-row"><span class="cred-label">${L("phone")}</span><span class="cred-value mono">${escapeHtml(c.phone || "—")}</span></div>
+            <div class="cred-row"><span class="cred-label">${L("password")}</span><span class="cred-value mono">${escapeHtml(c.code || "—")}</span></div>
+          </div>
+          <div class="cand-card-actions"></div>
+        </div>
+      `);
+      const actions = card.querySelector(".cand-card-actions");
       // "متى دخل هذا الكو-أدمن" — reuses the same login-device log
       // candidates already had (see logLoginDevice in onAuthStateChanged,
       // now also called for staff), so the main admin can see when a
       // co-admin actually signed in.
-      const devicesBtn = el(`<button class="link">${L("viewDevices")}</button>`);
-      const devicesHost = wrap.querySelector("#coadmin-devices-host");
+      const devicesBtn = makeChip("📱", L("viewDevices"));
       devicesBtn.onclick = () => {
         devicesHost.innerHTML = "";
         devicesHost.appendChild(renderCandidateDevicesPanel(c));
       };
-      tr.lastElementChild.appendChild(devicesBtn);
+      actions.appendChild(devicesBtn);
       if (ADMIN_SERVER_URL) {
         // Same fix as candidates: a plain Firestore delete would leave an
         // orphaned Auth login behind (see makeHardDeleteBtn). Removing a
         // co-admin should mean actually gone, so this always hard-deletes.
-        tr.lastElementChild.appendChild(makeHardDeleteBtn(c));
+        actions.appendChild(makeHardDeleteBtn(c));
       } else {
-        const delBtn = el(`<button class="link danger" title="${L("hardDeleteUnavailable")}">${L("remove")}</button>`);
+        const delBtn = makeChip("⛔", L("remove"), "danger");
+        delBtn.title = L("hardDeleteUnavailable");
         delBtn.onclick = () => alert(L("hardDeleteUnavailable"));
-        tr.lastElementChild.appendChild(delBtn);
+        actions.appendChild(delBtn);
       }
-      rows.appendChild(tr);
+      rows.appendChild(card);
     });
   });
   return wrap;
