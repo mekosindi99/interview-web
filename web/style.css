@@ -110,6 +110,22 @@ img, canvas, svg, video, audio { max-width: 100%; }
    the single 420px cap and consistent gap; the cards inside just fill it. */
 .result-shell { max-width: 420px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
 .result-shell .card { margin: 0; box-shadow: 0 1px 3px rgba(0,0,0,.04); }
+/* Matches .result-shell's own width/spacing exactly (same 420px cap, same
+   14px gap before the cards below it) even though it sits outside that
+   wrapper, so it reads as one consistent stack of rectangles instead of a
+   small button floating above bigger cards. */
+.material-entry-card {
+  max-width: 420px; margin: 0 auto 14px; box-shadow: 0 1px 3px rgba(0,0,0,.04);
+  display: flex; align-items: center; gap: 14px; cursor: pointer;
+  transition: box-shadow .15s, transform .15s;
+}
+.material-entry-card:hover { box-shadow: 0 6px 18px rgba(0,0,0,.08); transform: translateY(-1px); }
+.material-entry-thumb {
+  width: 56px; height: 56px; border-radius: 10px; background: var(--bg); border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center; font-size: 26px; flex-shrink: 0; overflow: hidden;
+}
+.material-entry-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.material-entry-label { font-weight: 700; font-size: 15px; }
 .about-intro { display: flex; align-items: center; gap: 14px; }
 .about-intro-icon { font-size: 32px; }
 .about-intro h2 { margin: 0 0 4px; }

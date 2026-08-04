@@ -2951,8 +2951,9 @@ function renderResult() {
   const wrap = el(`
     <div class="shell">
       <div id="leaderboard-host"></div>
-      <div class="row-actions" style="justify-content:center;margin-bottom:4px">
-        <button id="material-btn-result" class="ghost">${L("readMaterial")}</button>
+      <div class="card material-entry-card" id="material-entry-card">
+        <div class="material-entry-thumb" id="material-entry-thumb">📖</div>
+        <div class="material-entry-label">${L("readMaterial")}</div>
       </div>
       <div class="result-shell">
         <div id="cred-card-host"></div>
@@ -2965,11 +2966,35 @@ function renderResult() {
       <div id="result-review"></div>
     </div>
   `);
-  wrap.querySelector("#material-btn-result").onclick = () => setState({ route: "material" });
+  wrap.querySelector("#material-entry-card").onclick = () => setState({ route: "material" });
   // Shown at the very top of this screen (the candidate's home once
   // they've taken the exam), on every visit — not behind a separate
   // button/route, and not buried below the rest of the page.
   wrap.querySelector("#leaderboard-host").appendChild(buildLeaderboardCard());
+  // Thumbnail of the material's first page — image mode only (a PDF's
+  // first page would need pdf.js loaded just to draw a preview, not
+  // worth the extra weight on every visit to this screen just for a
+  // thumbnail). Falls back to the plain 📖 icon otherwise.
+  (async () => {
+    if (state.material == null) {
+      const snap = await getDoc(doc(db, "settings", "material"));
+      state.material = snap.exists() ? snap.data() : false;
+    }
+    const m = state.material;
+    if (!m || m.mode !== "images" || !m.images?.[0]?.fileId || !ADMIN_SERVER_URL) return;
+    try {
+      const token = await state.user.getIdToken();
+      const res = await fetch(`${ADMIN_SERVER_URL}/material-image/${m.images[0].fileId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const url = URL.createObjectURL(await res.blob());
+      const thumb = wrap.querySelector("#material-entry-thumb");
+      if (thumb) thumb.innerHTML = `<img src="${url}" alt="" />`;
+    } catch (err) {
+      console.warn("material thumbnail failed", err);
+    }
+  })();
   // -u-nu-latn: keep Arabic date/time formatting but force Western digits
   // (0-9) instead of Eastern Arabic-Indic numerals (٠-٩) everywhere in the app.
   const localeMap = { ar: "ar-IQ-u-nu-latn", ku: "en-GB", en: "en-US" };
