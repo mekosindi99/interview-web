@@ -756,6 +756,17 @@ function renderLogin() {
     </div>
   `);
   wirePwToggles(wrap);
+  // Caps a phone number at 11 digits as it's typed, the same way the
+  // candidate-creation field's maxlength="11" does. It can't be a plain
+  // maxlength here because this one field also takes an admin's email, which
+  // is longer — so the cap only kicks in while the value is all digits, and
+  // an email is left completely alone.
+  const identifierInput = wrap.querySelector('input[name="identifier"]');
+  identifierInput.oninput = () => {
+    if (/^\d+$/.test(identifierInput.value) && identifierInput.value.length > 11) {
+      identifierInput.value = identifierInput.value.slice(0, 11);
+    }
+  };
   wrap.querySelector("#login-form").onsubmit = async (e) => {
     e.preventDefault();
     const f = new FormData(e.target);
