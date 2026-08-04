@@ -769,6 +769,37 @@ function renderAdminShell() {
   return wrap;
 }
 
+// Mandatory pre-exam profile form: which fields to ask for. Lives on the
+// Candidates tab (next to "إنشاء حساب متقدم") rather than Exam Settings —
+// both are about the candidate signup/intake side of things, so keeping
+// them in the same place is what was actually asked for, per the
+// screenshots showing this card and the new-candidate form together.
+function renderProfileFieldsForm() {
+  const cfg = state.examConfig;
+  const profileForm = el(`
+    <form id="profile-fields-form" class="card">
+      <h3>${L("profileFieldsTitle")}</h3>
+      <p class="hint">${L("profileFieldsHint")}</p>
+      ${PROFILE_FIELD_KEYS.map((k) => `
+        <label class="checkbox-row"><input type="checkbox" name="pf_${k}" ${cfg.profileFields[k] ? "checked" : ""} /> ${L("profileField_" + k)}</label>
+      `).join("")}
+      <div class="err" id="profile-fields-msg"></div>
+      <button type="submit" class="primary">${L("saveSettings")}</button>
+    </form>
+  `);
+  profileForm.onsubmit = async (e) => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const profileFields = {};
+    PROFILE_FIELD_KEYS.forEach((k) => { profileFields[k] = f.get(`pf_${k}`) === "on"; });
+    await setDoc(doc(db, "settings", "examConfig"), { profileFields }, { merge: true });
+    state.examConfig = { ...state.examConfig, profileFields };
+    const msg = profileForm.querySelector("#profile-fields-msg");
+    msg.textContent = L("settingsSaved"); msg.classList.remove("err"); msg.classList.add("notice");
+  };
+  return profileForm;
+}
+
 function renderExamSettingsTab() {
   const cfg = state.examConfig;
   const wrap = el(`<div></div>`);
@@ -798,30 +829,6 @@ function renderExamSettingsTab() {
     msg.textContent = L("settingsSaved"); msg.classList.remove("err"); msg.classList.add("notice");
   };
   wrap.appendChild(fontForm);
-
-  // ---- Mandatory pre-exam profile form: which fields to ask for ----
-  const profileForm = el(`
-    <form id="profile-fields-form" class="card">
-      <h3>${L("profileFieldsTitle")}</h3>
-      <p class="hint">${L("profileFieldsHint")}</p>
-      ${PROFILE_FIELD_KEYS.map((k) => `
-        <label class="checkbox-row"><input type="checkbox" name="pf_${k}" ${cfg.profileFields[k] ? "checked" : ""} /> ${L("profileField_" + k)}</label>
-      `).join("")}
-      <div class="err" id="profile-fields-msg"></div>
-      <button type="submit" class="primary">${L("saveSettings")}</button>
-    </form>
-  `);
-  profileForm.onsubmit = async (e) => {
-    e.preventDefault();
-    const f = new FormData(e.target);
-    const profileFields = {};
-    PROFILE_FIELD_KEYS.forEach((k) => { profileFields[k] = f.get(`pf_${k}`) === "on"; });
-    await setDoc(doc(db, "settings", "examConfig"), { profileFields }, { merge: true });
-    state.examConfig = { ...state.examConfig, profileFields };
-    const msg = profileForm.querySelector("#profile-fields-msg");
-    msg.textContent = L("settingsSaved"); msg.classList.remove("err"); msg.classList.add("notice");
-  };
-  wrap.appendChild(profileForm);
 
   // ---- Per-section time limits (independent of selection mode) ----
   const minutesForm = el(`
@@ -1231,6 +1238,7 @@ function renderCandidatesTab() {
         ${ADMIN_SERVER_URL ? `<button id="sync-all-leaderboard-btn" class="ghost">${L("syncLeaderboardAllBtn")}</button>` : ""}
       </div>
       <div id="new-cand-form"></div>
+      <div id="profile-fields-host"></div>
       <div class="row-actions" style="margin:12px 0">
         <select id="filter-status">
           <option value="all">${L("filterAll")}</option>
@@ -1260,6 +1268,12 @@ function renderCandidatesTab() {
     formHost.innerHTML = "";
     formHost.appendChild(renderNewCandidateForm());
   };
+  // Same place as candidate creation itself — both are about what happens
+  // when a new candidate account is set up, so they belong together
+  // instead of one being tucked away in Exam Settings.
+  if (state.profile.role === "admin" && !showRemoved) {
+    toolbar.querySelector("#profile-fields-host").appendChild(renderProfileFieldsForm());
+  }
   toolbar.querySelector("#toggle-removed-btn").onclick = () => setState({ showRemovedCandidates: !showRemoved });
   const resetAllBtn = toolbar.querySelector("#reset-all-exams-btn");
   if (resetAllBtn) resetAllBtn.onclick = resetAllExamsBulk;
@@ -2687,7 +2701,8 @@ function renderProfileIntakeForm() {
             </select>
           </label>` : ""}
         ${pf.cv ? `
-          <label>${L("profileField_cv")}<input type="file" name="cv" accept=".pdf,.doc,.docx" ${existing.cvFileId ? "" : "required"} /></label>
+          <label>${L("profileField_cv")} <span class="hint">(${L("optionalLabel")})</span><input type="file" name="cv" accept=".pdf,.doc,.docx" /></label>
+          <p class="hint">${L("cvOptionalHint")}</p>
           ${existing.cvFileId ? `<p class="hint">${L("cvAlreadyUploaded")}</p>` : ""}
         ` : ""}
         <div class="err" id="profile-intake-err"></div>
@@ -2709,13 +2724,14 @@ function renderProfileIntakeForm() {
     try {
       if (pf.cv) {
         const cvFile = f.get("cv");
+        // Optional: a candidate can continue without a CV at all — it's
+        // worth 5 extra points on top of the exam when graded, but skipping
+        // it just means those 5 points never get added, not that they're
+        // blocked from continuing.
         if (cvFile && cvFile.size > 0) {
           errBox.textContent = L("uploadingFile");
           const { fileId } = await uploadViaServer("/uploads/cv", cvFile);
           profileExtra.cvFileId = fileId;
-        } else if (!profileExtra.cvFileId) {
-          errBox.textContent = L("cvRequired");
-          return;
         }
       }
       errBox.textContent = "";
