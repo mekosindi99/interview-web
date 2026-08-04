@@ -2528,38 +2528,72 @@ function renderQuestionsTab() {
     wrap.appendChild(addBtn);
     wrap.appendChild(formHost);
   }
-  const list = el(`<div class="q-list"></div>`);
+  // One collapsible group per exam section, so a question is only ever found
+  // under the section it belongs to instead of in one flat run where the
+  // section was just another tag to scan for. All four always render, even
+  // empty ones — an empty group states that the section has no questions yet,
+  // which a missing group would leave you to infer.
+  //
+  // Collapsed by default: the bank grows to dozens of questions and the tab
+  // opens on whichever section you actually came to work on, not on a wall of
+  // everything. Open/closed is kept in state rather than on the <details>
+  // element because every edit/delete/toggle below triggers a full re-render,
+  // which would otherwise snap every group shut mid-task.
+  const openMap = state.qSectionsOpen || (state.qSectionsOpen = {});
+  const bySection = {};
+  SECTIONS.forEach((s) => { bySection[s] = []; });
+  state.questions.forEach((q) => { (bySection[q.section] || bySection.reading).push(q); });
+
+  const list = el(`<div class="q-section-list"></div>`);
   if (!state.questions.length) list.appendChild(el(`<p>${L("noQuestions")}</p>`));
-  state.questions.forEach((q, i) => {
-    const card = el(`
-      <div class="q-card ${q.active === false ? "inactive" : ""}">
-        <div class="q-head"><span class="tag section-tag">${L(q.section || "reading")}</span> <span class="tag">${L(q.category)}</span> <span class="tag">${L(q.type)}</span> ${q.active === false ? `<span class="tag warn">${L("inactive")}</span>` : ""}</div>
-        <div class="q-text">${i + 1}. ${escapeHtml(q.text?.[state.lang] || q.text?.ar || "")}</div>
-        ${q.imagePath ? `<img class="q-thumb" src="${q.imagePath}" />` : ""}
-        <div class="q-answer">${answerPreview(q)}</div>
-        <div id="q-edit-host-${q.id}"></div>
-      </div>
+  SECTIONS.forEach((section) => {
+    const qs = bySection[section];
+    const group = el(`
+      <details class="q-section" ${openMap[section] ? "open" : ""}>
+        <summary class="q-section-head">
+          <span class="q-section-name">${L(section)}</span>
+          <span class="q-section-count">${qs.length}</span>
+        </summary>
+        <div class="q-list"></div>
+      </details>
     `);
-    if (isAdmin) {
-      const actions = el(`<div class="row-actions"></div>`);
-      const editBtn = el(`<button class="link">${L("edit")}</button>`);
-      editBtn.onclick = () => {
-        const host = card.querySelector(`#q-edit-host-${q.id}`);
-        host.innerHTML = host.children.length ? "" : "";
-        if (host.dataset.open) { host.innerHTML = ""; delete host.dataset.open; return; }
-        host.dataset.open = "1";
-        host.appendChild(renderQuestionForm(q));
-      };
-      const toggleBtn = el(`<button class="link">${q.active === false ? L("active") : L("inactive")}</button>`);
-      toggleBtn.onclick = () => updateDoc(doc(db, "questions", q.id), { active: q.active === false });
-      const delBtn = el(`<button class="link danger">${L("delete")}</button>`);
-      delBtn.onclick = () => { if (confirm(L("delete") + "?")) deleteDoc(doc(db, "questions", q.id)); };
-      actions.appendChild(editBtn);
-      actions.appendChild(toggleBtn);
-      actions.appendChild(delBtn);
-      card.appendChild(actions);
-    }
-    list.appendChild(card);
+    group.ontoggle = () => { openMap[section] = group.open; };
+    const sectionList = group.querySelector(".q-list");
+    if (!qs.length) sectionList.appendChild(el(`<p class="hint">${L("noQuestionsInSection")}</p>`));
+    qs.forEach((q, i) => {
+      // The section tag is gone from the head — the group heading above the
+      // card already says which section this is, so repeating it on every
+      // card was noise.
+      const card = el(`
+        <div class="q-card ${q.active === false ? "inactive" : ""}">
+          <div class="q-head"><span class="tag">${L(q.category)}</span> <span class="tag">${L(q.type)}</span> ${q.active === false ? `<span class="tag warn">${L("inactive")}</span>` : ""}</div>
+          <div class="q-text">${i + 1}. ${escapeHtml(q.text?.[state.lang] || q.text?.ar || "")}</div>
+          ${q.imagePath ? `<img class="q-thumb" src="${q.imagePath}" />` : ""}
+          <div class="q-answer">${answerPreview(q)}</div>
+          <div id="q-edit-host-${q.id}"></div>
+        </div>
+      `);
+      if (isAdmin) {
+        const actions = el(`<div class="row-actions"></div>`);
+        const editBtn = el(`<button class="link">${L("edit")}</button>`);
+        editBtn.onclick = () => {
+          const host = card.querySelector(`#q-edit-host-${q.id}`);
+          if (host.dataset.open) { host.innerHTML = ""; delete host.dataset.open; return; }
+          host.dataset.open = "1";
+          host.appendChild(renderQuestionForm(q));
+        };
+        const toggleBtn = el(`<button class="link">${q.active === false ? L("active") : L("inactive")}</button>`);
+        toggleBtn.onclick = () => updateDoc(doc(db, "questions", q.id), { active: q.active === false });
+        const delBtn = el(`<button class="link danger">${L("delete")}</button>`);
+        delBtn.onclick = () => { if (confirm(L("delete") + "?")) deleteDoc(doc(db, "questions", q.id)); };
+        actions.appendChild(editBtn);
+        actions.appendChild(toggleBtn);
+        actions.appendChild(delBtn);
+        card.appendChild(actions);
+      }
+      sectionList.appendChild(card);
+    });
+    list.appendChild(group);
   });
   wrap.appendChild(list);
   return wrap;

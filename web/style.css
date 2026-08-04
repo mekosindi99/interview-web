@@ -411,6 +411,34 @@ table.grid.leaderboard-table td.leaderboard-name { font-weight: 700; }
   50% { filter: drop-shadow(0 0 6px var(--me-highlight)); }
 }
 
+/* Question bank grouped into one collapsible <details> per exam section.
+   Native <details> rather than a hand-rolled toggle: it gets keyboard
+   operation and correct semantics for free, and collapsed-by-default is
+   simply the absence of the open attribute. */
+.q-section-list { display: flex; flex-direction: column; gap: 10px; }
+.q-section { background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.q-section-head {
+  display: flex; align-items: center; gap: 10px; cursor: pointer;
+  padding: 14px 16px; font-weight: 700; font-size: 15px;
+  list-style: none; user-select: none;
+}
+.q-section-head::-webkit-details-marker { display: none; }
+/* Own marker instead of the default triangle, so it points correctly in RTL
+   (the native one flips with direction and sits on the wrong edge here). */
+.q-section-head::before {
+  content: "▾"; color: var(--muted); font-size: 12px;
+  transition: transform .15s ease; flex-shrink: 0;
+}
+.q-section[open] > .q-section-head::before { transform: rotate(180deg); }
+.q-section[open] > .q-section-head { border-bottom: 1px solid var(--border); }
+.q-section-head:hover { background: var(--bg); }
+.q-section-name { flex: 1; }
+.q-section-count {
+  background: var(--bg); border: 1px solid var(--border); color: var(--muted);
+  border-radius: 999px; padding: 2px 10px; font-size: 12px; font-weight: 700;
+}
+.q-section > .q-list { padding: 12px 16px 16px; }
+
 .q-list { display: flex; flex-direction: column; gap: 10px; }
 .q-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
 .q-card.inactive { opacity: .55; }
