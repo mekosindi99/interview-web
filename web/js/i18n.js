@@ -37,7 +37,7 @@ export const t = {
     lastSeenHoursAgo: "قبل {n} ساعة",
     lastSeenDaysAgo: "قبل {n} يوم",
     offlineNow: "غير متصل",
-    syncLeaderboardAllBtn: "نشر بلوحة النتائج",
+    syncLeaderboardAllBtn: "نشر النتائج للمشتركين",
     syncLeaderboardAllNone: "ما فيه مرشحين خلصوا الامتحان بعد.",
     syncLeaderboardAllProgress: "جاري النشر... {done}/{total}",
     syncLeaderboardAllDone: "تم النشر لـ{published} من أصل {total} (الباقي لسا بانتظار تصحيح يدوي).",
