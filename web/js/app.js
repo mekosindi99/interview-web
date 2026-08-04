@@ -1121,6 +1121,7 @@ function renderCandidatesTab() {
       <button id="new-cand-btn" class="primary">${L("createCandidate")}</button>
       <button id="toggle-removed-btn" class="ghost">${showRemoved ? L("candidates") : L("removedCandidates")}</button>
       ${state.profile.role === "admin" ? `<button id="reset-all-exams-btn" class="ghost danger">${L("resetAllExamsBtn")}</button>` : ""}
+      ${ADMIN_SERVER_URL ? `<button id="sync-all-leaderboard-btn" class="ghost">${L("syncLeaderboardAllBtn")}</button>` : ""}
       <div id="new-cand-form"></div>
       <div class="row-actions" style="margin:12px 0">
         <select id="filter-status">
@@ -1154,6 +1155,8 @@ function renderCandidatesTab() {
   toolbar.querySelector("#toggle-removed-btn").onclick = () => setState({ showRemovedCandidates: !showRemoved });
   const resetAllBtn = toolbar.querySelector("#reset-all-exams-btn");
   if (resetAllBtn) resetAllBtn.onclick = resetAllExamsBulk;
+  const syncAllBtn = toolbar.querySelector("#sync-all-leaderboard-btn");
+  if (syncAllBtn) syncAllBtn.onclick = () => syncAllLeaderboard(syncAllBtn);
   const rows = toolbar.querySelector("#cand-rows");
   visible.forEach((c) => {
     const att = state.attempts[c.id];
@@ -1201,32 +1204,6 @@ function renderCandidatesTab() {
       const btn = makeChip("👁️", L("viewResult"));
       btn.onclick = () => setState({ adminTab: "candidates", viewCandidate: c.id });
       actions.appendChild(btn);
-      // Covers two cases in one click: (1) an exam with nothing manual to
-      // grade that got stuck at "submitted" before this was fixed
-      // server-side (see /leaderboard/sync's self-heal), and (2) just
-      // re-publishing after a score changed. Harmless to click on an
-      // already-published or still-pending-manual-grading result — the
-      // server only ever republishes/holds back based on the real
-      // attempts doc, never anything this button claims.
-      if (ADMIN_SERVER_URL) {
-        const syncBtn = makeChip("📊", L("syncLeaderboardBtn"));
-        syncBtn.onclick = async () => {
-          syncBtn.disabled = true;
-          try {
-            const token = await state.user.getIdToken();
-            const res = await fetch(`${ADMIN_SERVER_URL}/leaderboard/sync/${c.id}`, {
-              method: "POST", headers: { Authorization: `Bearer ${token}` },
-            });
-            const body = await res.json().catch(() => ({}));
-            if (!res.ok) throw new Error(body.error || res.statusText);
-            alert(body.published ? L("syncLeaderboardDone") : L("syncLeaderboardPending"));
-          } catch (err) {
-            alert(`${L("error")}: ${err.message}`);
-          }
-          syncBtn.disabled = false;
-        };
-        actions.appendChild(syncBtn);
-      }
     }
     const devicesBtn = makeChip("📱", L("viewDevices"));
     devicesBtn.onclick = () => setState({ adminTab: "candidates", viewCandidateDevices: c.id });
@@ -1301,6 +1278,40 @@ async function resetAllExamsBulk() {
     }
   }
   alert(L("resetAllExamsDone"));
+}
+
+// Bulk version of the old per-candidate "نشر بلوحة النتائج" chip — one
+// click syncs every submitted/graded candidate to the public leaderboard
+// instead of doing it one card at a time. Same server endpoint
+// (/leaderboard/sync/:uid) per candidate; it only actually publishes ones
+// that are truly graded (nothing manual left pending) and self-heals any
+// stuck at "submitted" with no manual questions, same as before.
+async function syncAllLeaderboard(btn) {
+  if (!ADMIN_SERVER_URL) return;
+  const candidates = state.candidates.filter((c) => !c.deleted && ["submitted", "graded"].includes(c.examStatus));
+  if (!candidates.length) { alert(L("syncLeaderboardAllNone")); return; }
+  btn.disabled = true;
+  const originalText = btn.textContent;
+  let published = 0;
+  try {
+    const token = await state.user.getIdToken();
+    for (const c of candidates) {
+      btn.textContent = L("syncLeaderboardAllProgress", { done: published, total: candidates.length });
+      try {
+        const res = await fetch(`${ADMIN_SERVER_URL}/leaderboard/sync/${c.id}`, {
+          method: "POST", headers: { Authorization: `Bearer ${token}` },
+        });
+        const body = await res.json().catch(() => ({}));
+        if (res.ok && body.published) published++;
+      } catch (err) {
+        console.warn(`leaderboard sync failed for candidate ${c.id}`, err);
+      }
+    }
+    alert(L("syncLeaderboardAllDone", { published, total: candidates.length }));
+  } finally {
+    btn.textContent = originalText;
+    btn.disabled = false;
+  }
 }
 
 // Archives the candidate's current attempt (if any) into pastAttempts, then
@@ -2857,6 +2868,7 @@ function renderResult() {
   const p = state.profile;
   const wrap = el(`
     <div class="shell">
+      <div id="leaderboard-host"></div>
       <div class="row-actions" style="justify-content:center;margin-bottom:4px">
         <button id="material-btn-result" class="ghost">${L("readMaterial")}</button>
       </div>
@@ -2872,9 +2884,10 @@ function renderResult() {
     </div>
   `);
   wrap.querySelector("#material-btn-result").onclick = () => setState({ route: "material" });
-  // Shown on every visit to this screen (the candidate's home once they've
-  // taken the exam), not behind a separate button/route anymore.
-  wrap.querySelector("#result-review").appendChild(buildLeaderboardCard());
+  // Shown at the very top of this screen (the candidate's home once
+  // they've taken the exam), on every visit — not behind a separate
+  // button/route, and not buried below the rest of the page.
+  wrap.querySelector("#leaderboard-host").appendChild(buildLeaderboardCard());
   // -u-nu-latn: keep Arabic date/time formatting but force Western digits
   // (0-9) instead of Eastern Arabic-Indic numerals (٠-٩) everywhere in the app.
   const localeMap = { ar: "ar-IQ-u-nu-latn", ku: "en-GB", en: "en-US" };
