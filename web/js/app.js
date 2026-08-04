@@ -77,6 +77,11 @@ const DEFAULT_SECTION_MINUTES = { reading: 20, listening: 15, speaking: 10, writ
 // 0 = no limit, use every active question in that section.
 const DEFAULT_SECTION_COUNTS = { reading: 0, listening: 0, speaking: 0, writing: 0 };
 
+// Mandatory pre-exam profile form fields (see renderProfileIntakeForm) —
+// admin toggles which ones are asked for. All on by default.
+const PROFILE_FIELD_KEYS = ["age", "education", "married", "tribe", "workedBefore", "cv"];
+const DEFAULT_PROFILE_FIELDS = { age: true, education: true, married: true, tribe: true, workedBefore: true, cv: true };
+
 // Site-wide font, admin-configurable (Exam Settings). Only fonts actually
 // available for free via Google Fonts are listed here — "Sarchia"/"IrSharp"
 // (Farsi fonts) aren't on Google Fonts and would need the admin to supply
@@ -224,7 +229,7 @@ let state = {
   questions: [],
   candidates: [],
   attempts: {},
-  examConfig: { sectionMinutes: { ...DEFAULT_SECTION_MINUTES }, sectionCounts: { ...DEFAULT_SECTION_COUNTS }, sectionOrder: [...SECTIONS], selectionMode: "random", manualQuestionIds: [], fontFamily: "cairo" },
+  examConfig: { sectionMinutes: { ...DEFAULT_SECTION_MINUTES }, sectionCounts: { ...DEFAULT_SECTION_COUNTS }, sectionOrder: [...SECTIONS], selectionMode: "random", manualQuestionIds: [], fontFamily: "cairo", profileFields: { ...DEFAULT_PROFILE_FIELDS } },
   material: null,
 };
 
@@ -441,6 +446,10 @@ function mergeExamConfig(data) {
     // marked "accepted" — 0 means the admin hasn't set an admission count
     // yet, so nobody is marked.
     acceptCount: Number.isInteger(data?.acceptCount) && data.acceptCount >= 0 ? data.acceptCount : 0,
+    // Which fields the mandatory pre-exam profile form asks for — a field
+    // the admin turns off here is both hidden AND not required. On by
+    // default so the feature works immediately without extra setup.
+    profileFields: { ...DEFAULT_PROFILE_FIELDS, ...(data?.profileFields || {}) },
   };
 }
 function watchExamConfig() {
@@ -577,6 +586,15 @@ function render() {
   if (!state.user) return root.appendChild(renderLogin());
 
   if (state.profile?.role === "candidate") {
+    // Mandatory profile intake — blocks every other candidate route (exam,
+    // result, material) until filled in, if the admin has any of these
+    // fields turned on and this candidate hasn't completed it yet.
+    const pf = state.examConfig.profileFields;
+    const anyFieldOn = PROFILE_FIELD_KEYS.some((k) => pf[k]);
+    if (anyFieldOn && !state.profile.profileCompleted) {
+      root.appendChild(renderProfileIntakeForm());
+      return;
+    }
     if (state.route === "material") {
       root.appendChild(renderMaterialViewer());
     } else if (state.route === "result" || ["submitted", "graded"].includes(state.profile.examStatus)) {
@@ -780,6 +798,30 @@ function renderExamSettingsTab() {
     msg.textContent = L("settingsSaved"); msg.classList.remove("err"); msg.classList.add("notice");
   };
   wrap.appendChild(fontForm);
+
+  // ---- Mandatory pre-exam profile form: which fields to ask for ----
+  const profileForm = el(`
+    <form id="profile-fields-form" class="card">
+      <h3>${L("profileFieldsTitle")}</h3>
+      <p class="hint">${L("profileFieldsHint")}</p>
+      ${PROFILE_FIELD_KEYS.map((k) => `
+        <label class="checkbox-row"><input type="checkbox" name="pf_${k}" ${cfg.profileFields[k] ? "checked" : ""} /> ${L("profileField_" + k)}</label>
+      `).join("")}
+      <div class="err" id="profile-fields-msg"></div>
+      <button type="submit" class="primary">${L("saveSettings")}</button>
+    </form>
+  `);
+  profileForm.onsubmit = async (e) => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const profileFields = {};
+    PROFILE_FIELD_KEYS.forEach((k) => { profileFields[k] = f.get(`pf_${k}`) === "on"; });
+    await setDoc(doc(db, "settings", "examConfig"), { profileFields }, { merge: true });
+    state.examConfig = { ...state.examConfig, profileFields };
+    const msg = profileForm.querySelector("#profile-fields-msg");
+    msg.textContent = L("settingsSaved"); msg.classList.remove("err"); msg.classList.add("notice");
+  };
+  wrap.appendChild(profileForm);
 
   // ---- Per-section time limits (independent of selection mode) ----
   const minutesForm = el(`
@@ -1279,6 +1321,11 @@ function renderCandidatesTab() {
     const historyBtn = makeChip("🗂️", L("examHistory"));
     historyBtn.onclick = () => setState({ adminTab: "candidates", viewCandidateHistory: c.id });
     actions.appendChild(historyBtn);
+    if (c.profileCompleted) {
+      const profileBtn = makeChip("📋", L("profileFieldsTitle"));
+      profileBtn.onclick = () => setState({ adminTab: "candidates", viewCandidateProfile: c.id });
+      actions.appendChild(profileBtn);
+    }
     const blockBtn = makeChip(c.blocked ? "✅" : "🚫", c.blocked ? L("unblock") : L("block"), "warn");
     blockBtn.onclick = async () => {
       const blocking = !c.blocked;
@@ -1310,6 +1357,48 @@ function renderCandidatesTab() {
   if (state.viewCandidateHistory) {
     const c = state.candidates.find((x) => x.id === state.viewCandidateHistory);
     if (c) wrap.appendChild(renderCandidateHistoryPanel(c));
+  }
+  if (state.viewCandidateProfile) {
+    const c = state.candidates.find((x) => x.id === state.viewCandidateProfile);
+    if (c) wrap.appendChild(renderCandidateProfilePanel(c));
+  }
+  return wrap;
+}
+
+// Shows what a candidate filled in on the mandatory pre-exam intake form
+// (age/education/marital status/tribe/work history/CV) — admin/coadmin
+// only, same viewCandidate* pattern as the devices/history panels above.
+function renderCandidateProfilePanel(c) {
+  const p = c.profileExtra || {};
+  const rows = [
+    ["age", p.age],
+    ["education", p.education],
+    ["married", p.married ? L(p.married === "married" ? "maritalMarried" : "maritalSingle") : null],
+    ["tribe", p.tribe],
+    ["workedBefore", p.workedBefore ? L(p.workedBefore === "yes" ? "yes" : "no") : null],
+  ].filter(([, v]) => v != null && v !== "");
+  const wrap = el(`<div class="card"><h3>${escapeHtml(c.name)} — ${L("profileFieldsTitle")}</h3></div>`);
+  rows.forEach(([key, value]) => {
+    wrap.appendChild(el(`
+      <div class="cred-row"><span class="cred-label">${L("profileField_" + key)}</span><span class="cred-value">${escapeHtml(String(value))}</span></div>
+    `));
+  });
+  if (p.cvFileId && ADMIN_SERVER_URL) {
+    const cvBtn = el(`<button type="button" class="ghost" style="margin-top:10px">${L("profileField_cv")}</button>`);
+    cvBtn.onclick = async () => {
+      try {
+        const token = await state.user.getIdToken();
+        const res = await fetch(`${ADMIN_SERVER_URL}/cv/${p.cvFileId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+        const url = URL.createObjectURL(await res.blob());
+        window.open(url, "_blank");
+      } catch (err) {
+        alert(`${L("error")}: ${err.message}`);
+      }
+    };
+    wrap.appendChild(cvBtn);
   }
   return wrap;
 }
@@ -2561,6 +2650,85 @@ function fmtTime(totalSec) {
   const m = Math.floor(s / 60);
   const r = s % 60;
   return `${m}:${String(r).padStart(2, "0")}`;
+}
+
+// Mandatory one-time form shown right after a candidate's first login,
+// before they can reach the exam/result/material screens at all — which
+// fields appear (and are required) is controlled by the admin's
+// profileFields toggles in Exam Settings. Writes straight to the
+// candidate's own users/{uid} doc, already allowed by the existing
+// diff-restricted candidate self-update rule (only role/blocked/deleted/
+// score are off-limits), so no firestore.rules change was needed.
+function renderProfileIntakeForm() {
+  const pf = state.examConfig.profileFields;
+  const existing = state.profile.profileExtra || {};
+  const wrap = el(`
+    <div class="shell">
+      <form id="profile-intake-form" class="card center-card">
+        <h2>${L("profileIntakeTitle")}</h2>
+        <p class="hint">${L("profileIntakeHint")}</p>
+        ${pf.age ? `<label>${L("profileField_age")}<input type="number" name="age" min="1" max="120" required value="${existing.age ?? ""}" /></label>` : ""}
+        ${pf.education ? `<label>${L("profileField_education")}<input type="text" name="education" required value="${escapeHtml(existing.education || "")}" /></label>` : ""}
+        ${pf.married ? `
+          <label>${L("profileField_married")}
+            <select name="married" required>
+              <option value="">—</option>
+              <option value="single" ${existing.married === "single" ? "selected" : ""}>${L("maritalSingle")}</option>
+              <option value="married" ${existing.married === "married" ? "selected" : ""}>${L("maritalMarried")}</option>
+            </select>
+          </label>` : ""}
+        ${pf.tribe ? `<label>${L("profileField_tribe")}<input type="text" name="tribe" required value="${escapeHtml(existing.tribe || "")}" /></label>` : ""}
+        ${pf.workedBefore ? `
+          <label>${L("profileField_workedBefore")}
+            <select name="workedBefore" required>
+              <option value="">—</option>
+              <option value="yes" ${existing.workedBefore === "yes" ? "selected" : ""}>${L("yes")}</option>
+              <option value="no" ${existing.workedBefore === "no" ? "selected" : ""}>${L("no")}</option>
+            </select>
+          </label>` : ""}
+        ${pf.cv ? `
+          <label>${L("profileField_cv")}<input type="file" name="cv" accept=".pdf,.doc,.docx" ${existing.cvFileId ? "" : "required"} /></label>
+          ${existing.cvFileId ? `<p class="hint">${L("cvAlreadyUploaded")}</p>` : ""}
+        ` : ""}
+        <div class="err" id="profile-intake-err"></div>
+        <button type="submit" class="primary">${L("continueBtn")}</button>
+      </form>
+    </div>
+  `);
+  wrap.querySelector("#profile-intake-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const errBox = wrap.querySelector("#profile-intake-err");
+    errBox.textContent = "";
+    const profileExtra = { ...existing };
+    if (pf.age) profileExtra.age = Number(f.get("age"));
+    if (pf.education) profileExtra.education = String(f.get("education") || "").trim();
+    if (pf.married) profileExtra.married = f.get("married");
+    if (pf.tribe) profileExtra.tribe = String(f.get("tribe") || "").trim();
+    if (pf.workedBefore) profileExtra.workedBefore = f.get("workedBefore");
+    try {
+      if (pf.cv) {
+        const cvFile = f.get("cv");
+        if (cvFile && cvFile.size > 0) {
+          errBox.textContent = L("uploadingFile");
+          const { fileId } = await uploadViaServer("/uploads/cv", cvFile);
+          profileExtra.cvFileId = fileId;
+        } else if (!profileExtra.cvFileId) {
+          errBox.textContent = L("cvRequired");
+          return;
+        }
+      }
+      errBox.textContent = "";
+      await updateDoc(doc(db, "users", state.user.uid), {
+        profileCompleted: true,
+        profileExtra: { ...profileExtra, submittedAt: serverTimestamp() },
+      });
+      setState({ profile: { ...state.profile, profileCompleted: true, profileExtra } });
+    } catch (err) {
+      errBox.textContent = err.message;
+    }
+  };
+  return wrap;
 }
 
 function renderExam() {

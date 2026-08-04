@@ -278,6 +278,24 @@ app.post("/uploads/speaking/:qid", requireSignedIn, upload.single("file"), async
   }
 });
 
+// Candidate's own CV/resume, uploaded as part of the mandatory profile
+// intake form (age/education/marital status/tribe/work history/CV — see
+// app.js's renderProfileIntakeForm). Private on Drive like the speaking
+// recordings; only reachable through GET /cv/:fileId below.
+app.post("/uploads/cv", requireSignedIn, upload.single("file"), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: "no file" });
+    const fileId = await uploadToDrive({
+      name: `cv__${req.uid}__${Date.now()}__${req.file.originalname}`,
+      mimeType: req.file.mimetype || "application/pdf", buffer: req.file.buffer,
+    });
+    res.json({ fileId });
+  } catch (err) {
+    console.error("cv upload failed", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Listening-section prompt audio — admin only. Not personal data (same
 // admin-authored clip every candidate hears), so it's fine left publicly
 // link-readable — the client plays it directly via <audio src>.
@@ -521,6 +539,25 @@ app.get("/audio/:fileId", requireSignedIn, async (req, res) => {
     driveRes.data.pipe(res);
   } catch (err) {
     console.error("audio proxy failed", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Streams a candidate's private CV — signed-in only (staff reviewing it, or
+// the candidate re-opening the profile form to see what they already
+// uploaded). Same private-on-Drive pattern as speaking recordings.
+app.get("/cv/:fileId", requireSignedIn, async (req, res) => {
+  try {
+    const meta = await drive.files.get({ fileId: req.params.fileId, fields: "size,mimeType" });
+    const driveRes = await drive.files.get(
+      { fileId: req.params.fileId, alt: "media" },
+      { responseType: "stream" }
+    );
+    res.setHeader("Content-Type", meta.data.mimeType || "application/pdf");
+    if (meta.data.size) res.setHeader("Content-Length", meta.data.size);
+    driveRes.data.pipe(res);
+  } catch (err) {
+    console.error("cv proxy failed", err);
     res.status(500).json({ error: err.message });
   }
 });
