@@ -294,6 +294,11 @@ onAuthStateChanged(auth, async (user) => {
     route: profile.role === "candidate" ? "exam" : "admin",
   });
   if (profile.role === "admin" || profile.role === "coadmin") {
+    // Same login-device log candidates already got — the "when did this
+    // co-admin log in" half of the requested co-admin activity tracking.
+    // Viewable by the main admin under a candidate/coadmin's own
+    // "الأجهزة" panel (see renderCandidateDevicesPanel / loginDevices).
+    logLoginDevice(user);
     watchCandidates();
     watchQuestions();
     watchAttempts();
@@ -1677,6 +1682,7 @@ function renderCoadminsTab() {
           <tbody id="coadmin-rows"><tr><td colspan="4">${L("loading")}</td></tr></tbody>
         </table>
       </div>
+      <div id="coadmin-devices-host"></div>
     </div>
   `);
   wrap.querySelector("#new-coadmin-btn").onclick = () => {
@@ -1691,6 +1697,17 @@ function renderCoadminsTab() {
     snap.forEach((d) => {
       const c = { id: d.id, ...d.data() };
       const tr = el(`<tr><td>${escapeHtml(c.name)}</td><td>${escapeHtml(c.phone || "")}</td><td class="mono">${escapeHtml(c.code || "—")}</td><td></td></tr>`);
+      // "متى دخل هذا الكو-أدمن" — reuses the same login-device log
+      // candidates already had (see logLoginDevice in onAuthStateChanged,
+      // now also called for staff), so the main admin can see when a
+      // co-admin actually signed in.
+      const devicesBtn = el(`<button class="link">${L("viewDevices")}</button>`);
+      const devicesHost = wrap.querySelector("#coadmin-devices-host");
+      devicesBtn.onclick = () => {
+        devicesHost.innerHTML = "";
+        devicesHost.appendChild(renderCandidateDevicesPanel(c));
+      };
+      tr.lastElementChild.appendChild(devicesBtn);
       if (ADMIN_SERVER_URL) {
         // Same fix as candidates: a plain Firestore delete would leave an
         // orphaned Auth login behind (see makeHardDeleteBtn). Removing a
