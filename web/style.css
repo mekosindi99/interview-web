@@ -213,6 +213,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .stat-box { flex: 1; min-width: 100px; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; text-align: center; }
 .stat-num { font-size: 22px; font-weight: 800; color: var(--primary); }
 .stat-lbl { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.material-stat-lastread { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--border); font-size: 13px; }
 
 .score-chart { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 .score-chart-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }

@@ -1912,11 +1912,8 @@ function renderMaterialAdminTab() {
   const statsHost = el(`
     <div>
       <h3>${L("materialStats")}</h3>
-      <div class="table-scroll">
-        <table class="grid">
-          <thead><tr><th>${L("name")}</th><th>${L("sessionsCount")}</th><th>${L("totalTime")}</th><th>${L("maxPageReached")}</th><th>${L("lastRead")}</th></tr></thead>
-          <tbody id="material-stats-rows"><tr><td colspan="5">${L("loading")}</td></tr></tbody>
-        </table>
+      <div class="cand-card-grid" id="material-stats-rows">
+        <p class="hint">${L("loading")}</p>
       </div>
     </div>
   `);
@@ -1942,19 +1939,38 @@ function renderMaterialAdminTab() {
       const at = s.lastActiveAt?.seconds || 0;
       if (at > g.lastAt) g.lastAt = at;
     });
-    const rows = statsHost.querySelector("#material-stats-rows");
-    rows.innerHTML = "";
+    const grid = statsHost.querySelector("#material-stats-rows");
+    grid.innerHTML = "";
     const uids = Object.keys(byUid);
-    if (!uids.length) { rows.innerHTML = `<tr><td colspan="5">${L("neverRead")}</td></tr>`; return; }
+    if (!uids.length) { grid.innerHTML = `<p class="hint">${L("neverRead")}</p>`; return; }
     // -u-nu-latn: keep Arabic date/time formatting but force Western digits
-// (0-9) instead of Eastern Arabic-Indic numerals (٠-٩) everywhere in the app.
-const localeMap = { ar: "ar-IQ-u-nu-latn", ku: "en-GB", en: "en-US" };
-    uids.forEach((uid) => {
-      const g = byUid[uid];
-      const cand = state.candidates.find((c) => c.id === uid);
-      const name = cand?.name || g.name || uid;
+    // (0-9) instead of Eastern Arabic-Indic numerals (٠-٩) everywhere in the app.
+    const localeMap = { ar: "ar-IQ-u-nu-latn", ku: "en-GB", en: "en-US" };
+    // Total page count, when known (image mode only — a PDF's page count
+    // isn't stored anywhere), to show "21/21" instead of a bare number.
+    const totalPages = Array.isArray(state.material?.images) ? state.material.images.length : null;
+    // Ranked by total reading time — the most engaged reader's card leads.
+    const sorted = uids.map((uid) => ({ uid, ...byUid[uid] })).sort((a, b) => b.totalSec - a.totalSec);
+    sorted.forEach((g) => {
+      const cand = state.candidates.find((c) => c.id === g.uid);
+      const name = cand?.name || g.name || g.uid;
       const lastStr = g.lastAt ? new Date(g.lastAt * 1000).toLocaleString(localeMap[state.lang]) : "—";
-      rows.appendChild(el(`<tr><td>${escapeHtml(name)}</td><td>${g.sessions}</td><td>${fmtTime(g.totalSec)}</td><td>${g.maxPage}</td><td>${lastStr}</td></tr>`));
+      const pageStr = totalPages ? `${g.maxPage}/${totalPages}` : `${g.maxPage}`;
+      grid.appendChild(el(`
+        <div class="cand-card material-stat-card">
+          <div class="cand-card-head">
+            <div class="cand-card-name">📖 ${escapeHtml(name)}</div>
+          </div>
+          <div class="stat-row">
+            <div class="stat-box"><div class="stat-num">${g.sessions}</div><div class="stat-lbl">${L("sessionsCount")}</div></div>
+            <div class="stat-box"><div class="stat-num">${fmtTime(g.totalSec)}</div><div class="stat-lbl">${L("totalTime")}</div></div>
+          </div>
+          <div class="stat-row">
+            <div class="stat-box"><div class="stat-num">${pageStr}</div><div class="stat-lbl">${L("maxPageReached")}</div></div>
+          </div>
+          <div class="material-stat-lastread"><span class="cred-label">${L("lastRead")}</span><span>${lastStr}</span></div>
+        </div>
+      `));
     });
   })();
 
