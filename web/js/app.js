@@ -2952,8 +2952,8 @@ function renderResult() {
     <div class="shell">
       <div id="leaderboard-host"></div>
       <div class="card material-entry-card" id="material-entry-card">
-        <div class="material-entry-thumb" id="material-entry-thumb">📖</div>
         <div class="material-entry-label">${L("readMaterial")}</div>
+        <div class="material-entry-thumb" id="material-entry-thumb">📖</div>
       </div>
       <div class="result-shell">
         <div id="cred-card-host"></div>
