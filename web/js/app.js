@@ -1363,6 +1363,9 @@ function renderCandidatesTab() {
       restoreBtn.onclick = async () => {
         await updateDoc(doc(db, "users", c.id), { deleted: false });
         try { await unblacklistFingerprint(c); } catch (err) { console.warn("fingerprint unblock failed", err); }
+        // Puts a restored candidate's result back on the board if it was
+        // already graded — mirrors the removal on delete above.
+        await syncLeaderboardFor(c.id);
       };
       actions.appendChild(restoreBtn);
       if (ADMIN_SERVER_URL && state.profile.role === "admin") actions.appendChild(makeHardDeleteBtn(c));
@@ -1399,6 +1402,10 @@ function renderCandidatesTab() {
         try { await blacklistFingerprint(c); } catch (err) { console.warn("fingerprint blacklist write failed", err); }
         // Soft delete only — see comment above on why we never hard-delete.
         await updateDoc(doc(db, "users", c.id), { deleted: true });
+        // Pulls them off the public results board straight away — the board
+        // is a separate collection and doesn't track the profile's deleted
+        // flag on its own, so without this a deleted candidate stayed listed.
+        await syncLeaderboardFor(c.id);
       };
       actions.appendChild(delBtn);
       if (ADMIN_SERVER_URL) actions.appendChild(makeHardDeleteBtn(c));
@@ -1494,12 +1501,28 @@ async function resetAllExamsBulk() {
 // Bulk version of the old per-candidate "نشر بلوحة النتائج" chip — one
 // click syncs every submitted/graded candidate to the public leaderboard
 // instead of doing it one card at a time. Same server endpoint
+// Best-effort re-sync of one candidate's public board entry. The server
+// decides what that means — publish, or remove the entry when the candidate
+// is soft-deleted or still pending manual grading — so callers just say
+// "this candidate changed" and don't duplicate that logic.
+function syncLeaderboardFor(uid) {
+  if (!ADMIN_SERVER_URL) return Promise.resolve();
+  return state.user.getIdToken().then((token) =>
+    fetch(`${ADMIN_SERVER_URL}/leaderboard/sync/${uid}`, {
+      method: "POST", headers: { Authorization: `Bearer ${token}` },
+    })
+  ).catch(() => {});
+}
+
 // (/leaderboard/sync/:uid) per candidate; it only actually publishes ones
 // that are truly graded (nothing manual left pending) and self-heals any
 // stuck at "submitted" with no manual questions, same as before.
 async function syncAllLeaderboard(btn) {
   if (!ADMIN_SERVER_URL) return;
-  const candidates = state.candidates.filter((c) => !c.deleted && ["submitted", "graded"].includes(c.examStatus));
+  // Deleted candidates are included on purpose: the server responds to those
+  // by removing their board entry, which makes this button a repair tool for
+  // any stale entry left behind — not just a publisher for live candidates.
+  const candidates = state.candidates.filter((c) => ["submitted", "graded"].includes(c.examStatus));
   if (!candidates.length) { alert(L("syncLeaderboardAllNone")); return; }
   btn.disabled = true;
   const originalText = btn.textContent;

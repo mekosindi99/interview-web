@@ -222,6 +222,13 @@ app.post("/leaderboard/sync/:uid", requireSelfOrAdmin("uid"), async (req, res) =
       db.collection("attempts").doc(uid).get(),
     ]);
     if (!userSnap.exists || !attemptSnap.exists) return res.status(404).json({ error: "not found" });
+    // A candidate the admin moved to the trash (soft delete) keeps their
+    // profile and attempt so they can be restored, but must not stay on the
+    // public board in the meantime — pull any existing entry instead.
+    if (userSnap.data().deleted) {
+      await db.collection("leaderboard").doc(uid).delete().catch(() => {});
+      return res.json({ ok: true, published: false, reason: "deleted" });
+    }
     let attempt = attemptSnap.data();
     // Self-heals a now-fixed bug where an exam with no manual questions
     // could get stuck at examStatus "submitted" forever (there was no
@@ -721,6 +728,11 @@ app.delete("/users/:uid", requireAdmin, async (req, res) => {
     });
     await db.collection("users").doc(uid).delete();
     await db.collection("attempts").doc(uid).delete().catch(() => {});
+    // The public results board is a separate collection keyed by uid, so it
+    // doesn't follow the profile/attempt into the grave on its own — without
+    // this, a permanently deleted candidate kept sitting on the board with
+    // their name and score, and nothing left in the UI to remove them with.
+    await db.collection("leaderboard").doc(uid).delete().catch(() => {});
     res.json({ ok: true });
   } catch (err) {
     console.error("delete-user failed", err);
