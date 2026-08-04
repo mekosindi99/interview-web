@@ -195,25 +195,41 @@ document.documentElement.dir = DIR[state.lang];
 document.documentElement.dataset.theme = state.theme;
 
 // Online/offline for the admin's candidate list — there's no Realtime
-// Database in this project (Firestore only), so presence is a plain
-// heartbeat: while a candidate has the app open, their own client
-// periodically stamps lastActiveAt on their own users/{uid} doc (already
+// Database in this project (Firestore only), so presence is a heartbeat:
+// while a candidate has the app open, their own client periodically stamps
+// lastActiveAt + online:true on their own users/{uid} doc (already
 // writable by them — see the diff-restricted candidate self-update rule in
-// firestore.rules, which only blocks role/blocked/deleted/score). The
-// admin side (isCandidateOnline below) just checks how stale that
-// timestamp is; there's no explicit "offline" write on tab close (not
-// reliably deliverable anyway) — going stale IS what going offline means.
+// firestore.rules, which only blocks role/blocked/deleted/score).
+// Un-graceful exits (tab closed, browser killed, network drop) are still
+// only ever caught by staleness — nothing can be written after the fact —
+// but an explicit LOGOUT is not silent: stopPresenceHeartbeat(true) writes
+// online:false right before signOut(), and since the admin's candidate
+// list is a live onSnapshot (watchCandidates), that flips their dot the
+// moment it happens, not up to a minute later. isCandidateOnline treats
+// online:false as authoritative even if lastActiveAt still looks "fresh".
 const PRESENCE_HEARTBEAT_MS = 25000;
 const PRESENCE_ONLINE_WINDOW_MS = PRESENCE_HEARTBEAT_MS * 2.5;
 let presenceHeartbeatInterval = null;
+let presenceUid = null;
 function startPresenceHeartbeat(uid) {
   stopPresenceHeartbeat();
-  const beat = () => updateDoc(doc(db, "users", uid), { lastActiveAt: serverTimestamp() }).catch(() => {});
+  presenceUid = uid;
+  const beat = () => updateDoc(doc(db, "users", uid), { lastActiveAt: serverTimestamp(), online: true }).catch(() => {});
   beat();
   presenceHeartbeatInterval = setInterval(beat, PRESENCE_HEARTBEAT_MS);
 }
-function stopPresenceHeartbeat() {
+// markOffline: pass true (from an explicit logout) to actually write
+// online:false first — awaited by the caller before signOut() runs, since
+// a signed-out user can no longer write to their own doc at all.
+function stopPresenceHeartbeat(markOffline) {
   if (presenceHeartbeatInterval) { clearInterval(presenceHeartbeatInterval); presenceHeartbeatInterval = null; }
+  if (markOffline && presenceUid) {
+    const uid = presenceUid;
+    presenceUid = null;
+    return updateDoc(doc(db, "users", uid), { online: false }).catch(() => {});
+  }
+  presenceUid = null;
+  return Promise.resolve();
 }
 // Going offline is silent (nothing gets written when a tab just closes), so
 // staff's own screen needs to re-check "is this still recent enough?" on
@@ -527,7 +543,12 @@ function langSwitcher() {
   const wrap = el(`<div class="lang-row"></div>`);
   if (state.user) {
     const logoutBtn = el(`<button type="button" class="ghost logout-flag-btn">${L("logout")}</button>`);
-    logoutBtn.onclick = () => signOut(auth);
+    // markOffline:true writes online:false to Firestore BEFORE signing out
+    // (a signed-out user can no longer write their own doc at all) — this
+    // is the real, immediate sync: since the admin's candidate list is a
+    // live onSnapshot, that write flips their dot the moment logout
+    // happens instead of waiting for the heartbeat to just go stale.
+    logoutBtn.onclick = () => stopPresenceHeartbeat(true).finally(() => signOut(auth));
     wrap.appendChild(logoutBtn);
   }
   const themeBtn = el(`
@@ -973,8 +994,31 @@ function statusLabel(c) {
 // a shaky connection, tight enough to go offline reasonably soon after a
 // tab actually closes.
 function isCandidateOnline(c) {
+  // online:false is an explicit logout write (see stopPresenceHeartbeat's
+  // markOffline) — authoritative regardless of how recent lastActiveAt
+  // still looks, since it means they deliberately signed out.
+  if (c.online === false) return false;
   const seenAt = c.lastActiveAt?.seconds ? c.lastActiveAt.seconds * 1000 : null;
   return !!seenAt && (Date.now() - seenAt) < PRESENCE_ONLINE_WINDOW_MS;
+}
+
+// "قبل 5 ثواني" / "قبل 3 دقائق" / "قبل ساعتين" — how long ago lastActiveAt
+// was, for the offline label next to a candidate's name. Recomputed on
+// every re-render (the same 25s admin-side tick that keeps the online/
+// offline dot fresh — see the setInterval above), not a live per-second
+// clock, which is granular enough for "last seen" and avoids running a
+// second timer just for this.
+function fmtLastSeen(c) {
+  const seenAt = c.lastActiveAt?.seconds ? c.lastActiveAt.seconds * 1000 : null;
+  if (!seenAt) return L("neverSeen");
+  const diffSec = Math.max(0, Math.round((Date.now() - seenAt) / 1000));
+  if (diffSec < 60) return L("lastSeenSecondsAgo", { n: diffSec });
+  const diffMin = Math.round(diffSec / 60);
+  if (diffMin < 60) return L("lastSeenMinutesAgo", { n: diffMin });
+  const diffHr = Math.round(diffMin / 60);
+  if (diffHr < 24) return L("lastSeenHoursAgo", { n: diffHr });
+  const diffDay = Math.round(diffHr / 24);
+  return L("lastSeenDaysAgo", { n: diffDay });
 }
 
 // Calls the optional admin-server to actually delete the Firebase Auth
@@ -1114,12 +1158,14 @@ function renderCandidatesTab() {
   visible.forEach((c) => {
     const att = state.attempts[c.id];
     const statusClass = c.blocked ? "blocked" : (STATUS_BADGE_CLASS[c.examStatus] || "not-started");
+    const online = isCandidateOnline(c);
     const card = el(`
       <div class="cand-card">
         <div class="cand-card-head">
           <div class="cand-card-name">
-            <span class="presence-dot ${isCandidateOnline(c) ? "online" : "offline"}" title="${isCandidateOnline(c) ? L("onlineNow") : L("offlineNow")}"></span>
+            <span class="presence-dot ${online ? "online" : "offline"}" title="${online ? L("onlineNow") : L("offlineNow")}"></span>
             ${escapeHtml(c.name)}
+            ${online ? "" : `<span class="presence-last-seen">${fmtLastSeen(c)}</span>`}
           </div>
           <span class="status-badge ${statusClass}">${statusLabel(c)}</span>
         </div>
