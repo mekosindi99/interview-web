@@ -1450,6 +1450,15 @@ function renderCandidatesTab() {
     }
     const blockBtn = makeChip(c.blocked ? "✅" : "🚫", c.blocked ? L("unblock") : L("block"), "warn");
     blockBtn.onclick = async () => {
+      // Guards against a fast double-click: `blocking` is derived from `c`,
+      // a snapshot captured when this card was built, not the doc's live
+      // state — two clicks before the onSnapshot re-render lands would both
+      // read the same stale c.blocked and toggle in the same direction
+      // twice, silently undoing the first click instead of confirming it.
+      // Disabling immediately means the second click can't fire at all; the
+      // next onSnapshot update replaces this card (and button) regardless.
+      if (blockBtn.disabled) return;
+      blockBtn.disabled = true;
       const blocking = !c.blocked;
       await updateDoc(doc(db, "users", c.id), { blocked: blocking });
       try { if (blocking) await blacklistFingerprint(c); else await unblacklistFingerprint(c); } catch (err) { console.warn("fingerprint blacklist write failed", err); }
@@ -2768,6 +2777,16 @@ function renderQuestionForm(existing) {
       // readable to identify the question by.
       textArInput.value = L("listeningQuestionPlaceholder");
       textKuInput.value = L("listeningQuestionPlaceholder");
+    } else if (!isListening
+      && textArInput.value === L("listeningQuestionPlaceholder")
+      && textKuInput.value === L("listeningQuestionPlaceholder")) {
+      // Switching the section away from listening while the placeholder is
+      // still sitting in the (now visible again) field used to save it
+      // verbatim as the question's real text if the admin didn't notice and
+      // overwrite it by hand — clearing it back out forces a real value
+      // through the field's own "required" validation instead.
+      textArInput.value = "";
+      textKuInput.value = "";
     }
     if (type === "speaking" || type === "writing") {
       extra.appendChild(el(`<p class="hint">${L("scoreOutOf", { max: POINTS_PER_QUESTION })} — ${L("manualGrading")}.</p>`));
@@ -3139,7 +3158,19 @@ function renderExam() {
 
   const curSection = sections[examSectionIndex];
   if (!curSection) return el(`<div class="card center-card">${L("noQuestions")}</div>`);
-  if (examQIndex > curSection.qs.length - 1) examQIndex = curSection.qs.length - 1;
+  // Math.max(0, ...) guards against curSection.qs ever being empty (it
+  // can't today — groupBySections already drops empty sections before this
+  // runs — but computing a bare -1 here would silently negative-index
+  // curSection.qs[examQIndex] below into undefined instead of failing
+  // loudly). Persisted immediately rather than only in memory: without
+  // this, a desynced examQIndex (e.g. the admin deactivated questions a
+  // candidate had already progressed past) got silently re-clamped on
+  // every single render instead of the correction ever actually landing in
+  // Firestore.
+  if (examQIndex > curSection.qs.length - 1) {
+    examQIndex = Math.max(0, curSection.qs.length - 1);
+    saveExamProgress();
+  }
   const q = curSection.qs[examQIndex];
   const isLastQInSection = examQIndex === curSection.qs.length - 1;
   const isLastSection = examSectionIndex === sections.length - 1;
@@ -3165,7 +3196,7 @@ function renderExam() {
         <div id="q-options"></div>
       </div>
       <div class="row-actions exam-nav">
-        <button id="prev-btn" ${examQIndex === 0 && examSectionIndex === 0 ? "disabled" : ""}>${L("prev")}</button>
+        <button id="prev-btn" ${examQIndex === 0 ? "disabled" : ""}>${L("prev")}</button>
         ${isLastQInSection && isLastSection
           ? `<button id="submit-btn" class="primary">${L("submitExam")}</button>`
           : isLastQInSection
@@ -3178,15 +3209,17 @@ function renderExam() {
 
   renderQuestionAnswerUI(wrap.querySelector("#q-options"), q);
 
+  // Deliberately never crosses into a previous section (examSectionIndex
+  // never decreases here) — a candidate leaving a section forward could
+  // otherwise walk back into it, then immediately hit "next section" again
+  // to re-trigger advanceSection(), which always hands out a brand-new
+  // full-length deadline with no memory of time already spent. Bouncing
+  // Previous/Next-section like that gave unlimited time on any section.
+  // Restricting Previous to the current section closes that off entirely —
+  // once a section is left, its deadline can never be touched again.
   const prevBtn = wrap.querySelector("#prev-btn");
   if (prevBtn) prevBtn.onclick = () => {
-    if (examQIndex > 0) { examQIndex -= 1; }
-    else if (examSectionIndex > 0) {
-      examSectionIndex -= 1;
-      examQIndex = sections[examSectionIndex].qs.length - 1;
-    }
-    saveExamProgress();
-    render();
+    if (examQIndex > 0) { examQIndex -= 1; saveExamProgress(); render(); }
   };
   const nextBtn = wrap.querySelector("#next-btn");
   if (nextBtn) nextBtn.onclick = () => { examQIndex += 1; saveExamProgress(); render(); };
