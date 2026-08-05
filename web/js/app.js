@@ -2888,10 +2888,22 @@ function renderQuestionForm(existing) {
     };
     if (!existing) { data.active = true; data.createdAt = serverTimestamp(); }
     if (type === "mcq" || type === "image") {
-      data.options = [0,1,2,3].map((i) => ({
+      const options = [0,1,2,3].map((i) => ({
         ar: f.get(`opt_ar_${i}`) || "", ku: f.get(`opt_ku_${i}`) || f.get(`opt_ar_${i}`) || "",
       }));
-      data.correctIndex = Number(f.get("correctIndex"));
+      const correctIndex = Number(f.get("correctIndex"));
+      // The admin always types the correct answer into option 1 while
+      // building the question — habit, not a rule the exam should reflect —
+      // which meant every mcq/listening question had the same answer sitting
+      // in the same slot. Shuffled once here, at save time, across every
+      // section: order in the form has no bearing on order in the exam.
+      const order = [0, 1, 2, 3];
+      for (let i = order.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [order[i], order[j]] = [order[j], order[i]];
+      }
+      data.options = order.map((i) => options[i]);
+      data.correctIndex = order.indexOf(correctIndex);
       if (type === "image") data.imagePath = f.get("imagePath");
     } else if (type === "truefalse") {
       data.correctAnswer = f.get("correctAnswer") === "true";
