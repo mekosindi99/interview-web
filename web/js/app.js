@@ -1048,9 +1048,32 @@ function renderPublishExamCard() {
   const publishBtn = el(`<button type="button" class="primary">${L("publishExamBtn", { n: graceMin })}</button>`);
   publishBtn.onclick = async () => {
     if (!confirm(L("publishExamConfirm", { n: graceMin }))) return;
+    // Publishing is "start a fresh exam round for everyone" — it wasn't
+    // resetting anyone's old data, so a previously graded candidate just
+    // kept showing their old finished result with no way back into the
+    // exam, and admins had to remember to separately click "امتحان جديد"
+    // (or "تصفير كل الامتحانات") every single time before publishing for
+    // this to actually mean anything. Folded that reset in here instead —
+    // it's the same per-candidate archive-then-reset performExamReset
+    // already uses, just run first, before the new window opens.
+    const candidates = state.candidates.filter((c) => !c.deleted);
+    const originalText = publishBtn.textContent;
+    publishBtn.disabled = true;
+    let done = 0;
+    for (const c of candidates) {
+      publishBtn.textContent = L("publishExamResetProgress", { done, total: candidates.length });
+      try {
+        await performExamReset(c);
+      } catch (err) {
+        console.warn(`reset failed for candidate ${c.id} during publish`, err);
+      }
+      done++;
+    }
     const examOpenAtMs = Date.now();
     await setDoc(doc(db, "settings", "examConfig"), { examOpenAtMs }, { merge: true });
     state.examConfig = { ...state.examConfig, examOpenAtMs };
+    publishBtn.textContent = originalText;
+    publishBtn.disabled = false;
     setState({});
   };
   publishActions.appendChild(publishBtn);
