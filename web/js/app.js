@@ -3553,15 +3553,22 @@ async function submitExam(activeQs) {
 // candidate sees in buildLeaderboardCard below — but with each candidate's
 // actual phone number (admins already see those unmasked everywhere else
 // in this dashboard) instead of the masked one the public board shows.
-// SheetJS is loaded from a CDN on demand, same pattern pdf.js already uses
-// elsewhere in this file, rather than shipping it in every page load for a
-// button an admin might use once.
+//
+// ExcelJS, not SheetJS: tried SheetJS first (same CDN-on-demand pattern
+// pdf.js already uses elsewhere in this file), but its free/community
+// build silently drops cell styling on write — confirmed directly, a
+// cell.s alignment set before writing read back with no alignment at all
+// after a round trip through XLSX.write. Centering the header/cells was
+// explicitly asked for, so that's a hard requirement, not a nice-to-have;
+// ExcelJS's styling actually persists (also confirmed directly) and is
+// still free/open, so it replaces SheetJS here entirely.
 async function exportResultsExcel(btn) {
   const originalText = btn.textContent;
   btn.disabled = true;
   btn.textContent = L("loading");
   try {
-    const XLSX = await import("https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm");
+    const mod = await import("https://cdn.jsdelivr.net/npm/exceljs@4.4.0/+esm");
+    const ExcelJS = mod.default || mod;
     const snap = await getDocs(collection(db, "leaderboard"));
     const rows = [];
     snap.forEach((d) => rows.push({ id: d.id, ...d.data() }));
@@ -3584,27 +3591,47 @@ async function exportResultsExcel(btn) {
       L("total"), L("timeTaken"),
       ...(acceptCount ? [L("admissionStatus")] : []),
     ];
-    const aoa = [header];
+
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet(L("leaderboardTitle").slice(0, 31));
+    // Left-to-right sheet, per explicit request — column A ("#") on the
+    // left like a standard spreadsheet, not mirrored.
+    ws.views = [{ rightToLeft: false }];
+    ws.columns = header.map((_, i) => ({ width: i === 1 ? 22 : 14 }));
+
+    const headerRow = ws.addRow(header);
+    headerRow.eachCell((cell) => {
+      cell.font = { bold: true };
+      cell.alignment = { horizontal: "center", vertical: "middle" };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFBDD7EE" } };
+      cell.border = {
+        top: { style: "thin", color: { argb: "FFB0B0B0" } }, bottom: { style: "thin", color: { argb: "FFB0B0B0" } },
+        left: { style: "thin", color: { argb: "FFB0B0B0" } }, right: { style: "thin", color: { argb: "FFB0B0B0" } },
+      };
+    });
+
     rows.forEach((row, i) => {
       const rank = i + 1;
       const cand = state.candidates.find((c) => c.id === row.id);
       const ss = row.sectionScores || {};
-      aoa.push([
+      const dataRow = ws.addRow([
         rank, row.name || "", cand?.phone || row.phoneMasked || "",
         ...sectionCols.map((s) => ss[s] ? `${ss[s].score}/${ss[s].total}` : "—"),
         row.score ?? 0, row.durationSec != null ? fmtTime(row.durationSec) : "—",
         ...(acceptCount ? [rank <= acceptCount ? L("admissionAccepted") : ""] : []),
       ]);
+      dataRow.eachCell((cell) => {
+        cell.alignment = { horizontal: "center", vertical: "middle" };
+      });
     });
-    const ws = XLSX.utils.aoa_to_sheet(aoa);
-    ws["!cols"] = header.map((_, i) => ({ wch: i === 1 ? 20 : 14 }));
-    const wb = XLSX.utils.book_new();
-    // Right-to-left sheet view so the columns read in the same order
-    // they're defined (rightmost = "#") when opened in Excel, matching how
-    // the on-site table itself is laid out.
-    wb.Workbook = { Views: [{ RTL: true }] };
-    XLSX.utils.book_append_sheet(wb, ws, L("leaderboardTitle").slice(0, 31));
-    XLSX.writeFile(wb, `${L("leaderboardTitle")}_${fmtDateTime(new Date()).replace(/[/:]/g, "-")}.xlsx`);
+
+    const buf = await wb.xlsx.writeBuffer();
+    const url = URL.createObjectURL(new Blob([buf], { type: "application/octet-stream" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${L("leaderboardTitle")}_${fmtDateTime(new Date()).replace(/[/:]/g, "-")}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
   } catch (err) {
     alert(`${L("error")}: ${err.message}`);
   } finally {
