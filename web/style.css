@@ -88,14 +88,6 @@ img, canvas, svg, video, audio { max-width: 100%; }
 }
 .logout-flag-btn { margin-inline-end: auto; }
 .topbar-timer-only { justify-content: center; }
-.lang-flag-btn {
-  display: flex; align-items: center; justify-content: center;
-  width: 38px; height: 38px; border: 2px solid transparent; background: var(--card);
-  border-radius: 50%; cursor: pointer; padding: 0; overflow: hidden; box-shadow: 0 0 0 1px var(--border);
-}
-.lang-flag-btn.active { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
-.flag-emoji { font-size: 20px; line-height: 1; }
-.flag-svg { width: 22px; height: 15px; border-radius: 2px; display: block; }
 
 .card {
   background: var(--card); border: 1px solid var(--border); border-radius: 12px;

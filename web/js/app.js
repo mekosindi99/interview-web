@@ -1,5 +1,5 @@
 import { firebaseConfig, ADMIN_SETUP_KEY, ADMIN_SERVER_URL } from "./firebase-config.js";
-import { tr, DIR, LANG_NAME, LANGS } from "./i18n.js";
+import { tr, DIR } from "./i18n.js";
 import { seedQuestions, CATEGORIES } from "./questions.js";
 
 import { initializeApp, getApp, getApps } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
@@ -272,9 +272,8 @@ function getSecondaryApp() {
 
 // ---------- Global state ----------
 let state = {
-  // English removed site-wide — Arabic/Kurdish only. Guards against a
-  // browser that still has "en" saved from before this change.
-  lang: LANGS.includes(localStorage.getItem("lang")) ? localStorage.getItem("lang") : "ar",
+  // Arabic-only site-wide (Kurdish and English were both removed).
+  lang: "ar",
   theme: localStorage.getItem("theme") === "dark" ? "dark" : "light",
   user: null,       // firebase auth user
   profile: null,     // users/{uid} doc
@@ -716,14 +715,9 @@ function renderMain() {
   root.appendChild(renderAdminShell());
 }
 
-// Real flag glyphs. Kurdish has no official Unicode flag emoji, so it's a
-// tiny inline SVG of the Kurdistan flag instead of an emoji.
-const KURD_FLAG_SVG = `<svg viewBox="0 0 30 20" class="flag-svg"><rect width="30" height="20" fill="#ED1C24"/><rect width="30" height="13.34" fill="#fff"/><rect width="30" height="6.67" fill="#007A3D"/><circle cx="15" cy="10" r="3.2" fill="none" stroke="#F9A11B" stroke-width="0.5"/><g fill="#F9A11B">${Array.from({length:21},(_,i)=>{const a=(i*360/21)*Math.PI/180;const x1=15+2.6*Math.cos(a),y1=10+2.6*Math.sin(a),x2=15+4*Math.cos(a),y2=10+4*Math.sin(a);return `<line x1="${x1.toFixed(2)}" y1="${y1.toFixed(2)}" x2="${x2.toFixed(2)}" y2="${y2.toFixed(2)}" stroke="#F9A11B" stroke-width="0.5"/>`;}).join("")}</g></svg>`;
-const LANG_FLAG = { ar: "🇮🇶", ku: KURD_FLAG_SVG, en: "🇺🇸" };
-function flagHtml(l) { return l === "ku" ? KURD_FLAG_SVG : `<span class="flag-emoji">${LANG_FLAG[l]}</span>`; }
-
-// Always-visible row of flag buttons — no dropdown to open/close, so the
-// choices stay on screen at all times (per explicit request).
+// Kurdish support (and its language-switcher flag row) was removed
+// site-wide — Arabic is the only language now, so a "switcher" with
+// exactly one always-active option had nothing left to switch between.
 function langSwitcher() {
   const wrap = el(`<div class="lang-row"></div>`);
   if (state.user) {
@@ -747,15 +741,6 @@ function langSwitcher() {
     setState({ theme: next });
   };
   wrap.appendChild(themeBtn);
-  LANGS.forEach((l) => {
-    const b = el(`
-      <button type="button" class="lang-flag-btn ${l === state.lang ? "active" : ""}" aria-label="${LANG_NAME[l]}" title="${LANG_NAME[l]}">
-        ${flagHtml(l)}
-      </button>
-    `);
-    b.onclick = () => { localStorage.setItem("lang", l); setState({ lang: l }); };
-    wrap.appendChild(b);
-  });
   return wrap;
 }
 
@@ -2410,20 +2395,6 @@ function renderMaterialAdminTab() {
   return wrap;
 }
 
-// Mirrors an Arabic field's value into its EN/KU siblings as the admin
-// types, until EN/KU are edited by hand — lets admins skip manually typing
-// the same text three times when they don't need real per-language
-// wording, while still allowing a real translation to be typed in later.
-function wireAutoFill(arEl, kuEl) {
-  if (!kuEl.value || kuEl.value === arEl.value) kuEl.dataset.autoFilled = "1";
-  kuEl.addEventListener("input", () => {
-    if (kuEl.value !== arEl.value) delete kuEl.dataset.autoFilled;
-  });
-  arEl.addEventListener("input", () => {
-    if (kuEl.dataset.autoFilled) kuEl.value = arEl.value;
-  });
-}
-
 // Deterministic id for a seed question, derived from its content — lets the
 // "add sample questions" button be clicked repeatedly without ever
 // inserting duplicates (see renderQuestionsTab below).
@@ -2450,8 +2421,6 @@ const ABOUT_GROUPS = {
       "4 أقسام: قراءة، استماع، محادثة، كتابة.",
       "أنواع الأسئلة: اختيار من متعدد، صح/خطأ، سؤال بصورة، محادثة (تسجيل صوتي)، كتابة (نص حر).",
       "فقرة قراءة اختيارية لأسئلة القراءة، وملف صوتي لأسئلة الاستماع.",
-      "تعبئة تلقائية للحقل الكردي أثناء الكتابة بالعربي (تقدر تعدّله يدوياً بعدين).",
-      "تحديد لغة عرض كل سؤال للمرشح: تلقائي (حسب لغته) أو عربي دائماً أو كردي دائماً.",
       "اختيار الإجابة الصحيحة براديو مباشر على كل خيار (بدل قائمة منفصلة).",
       "أداة تنظيف تحذف الأسئلة المكررة تلقائياً.",
     ]},
@@ -2495,52 +2464,11 @@ const ABOUT_GROUPS = {
       "خط Cairo موحد وألوان متسقة بكل الموقع.",
       "أزرار كبسولية الشكل بحركة سلسة عند التمرير والضغط.",
       "متوافق مع كل أحجام الشاشات (جوال، تابلت، كومبيوتر) بدون تكسّر بالتصميم.",
-      "الموقع عربي/كردي فقط (الإنجليزية أُزيلت بالكامل بناءً على طلبك).",
+      "الموقع عربي فقط (الإنجليزية والكردية أُزيلتا بالكامل بناءً على طلبك).",
     ]},
     { icon: "🛠️", title: "البنية التقنية", items: [
       "Firebase لتسجيل الدخول وقاعدة البيانات الحية.",
       "الملفات (PDF، صور، تسجيلات صوتية) تُخزّن بـGoogle Drive عبر سيرفر خلفي صغير — بديل مجاني عن Firebase Storage المدفوع.",
-    ]},
-  ],
-  ku: [
-    { icon: "🔐", title: "پاراستن و ئاسایشا تاقیکردنێ", items: [
-      "ڕێگرتنا چوونەژوورا هەمبەرهەم: چوونەژوور ژ ئامیرەکێ دی ب خۆیی ئامیرێ ئێکێ دەردئخیت.",
-      "شوینپێیا ئامێری بۆ ڕێگرتنا تۆمارکرنا دووبارە پشتی بلۆککرنێ.",
-      "تۆمارکرنا ئۆتۆماتیکی بۆ هەر چوونەژوورەکێ: IP، جورێ ئامێری، و گەڕۆک.",
-      "رێکارێن Firestore ڕێگری ژ گۆهرینا پلا داواکار بۆ خۆ دکەت.",
-      "هەمی لینکێن فایلان (PDF، وێنە، دەنگ) پێدڤیێت چوونەژوور.",
-    ]},
-    { icon: "📝", title: "بانکا پرسیاران", items: [
-      "4 بەش: خوندن، بیستن، قسەکرن، نڤیسین.",
-      "جورێن پرسیاران: هەلبژارتنا فرەیی، ڕاست/شاش، پرسیار ب وێنە، قسەکرن (تۆمارکرنا دەنگی)، نڤیسین.",
-      "زمانێ نیشاندانێ بۆ هەر پرسیارێ: ب خۆیی، هەردەم عەرەبی، یان هەردەم کوردی.",
-    ]},
-    { icon: "⚙️", title: "رێکخستنێت تاقیکردنێ", items: [
-      "دەمێ هەر بەشی ب خولەکان، ژمارا پرسیاران بۆ هەر بەشی.",
-      "دوو شێواز: ب خۆیی یان دەستنیشانکری ب دەستی ئەدمین.",
-      "هەلبژارتنا فۆنتێ ماڵپەری بۆ هەمی بکارئینەران.",
-    ]},
-    { icon: "✅", title: "هەلسەنگاندن و ئەنجام", items: [
-      "هەلسەنگاندنا ب خۆیی بۆ خوندن و بیستنێ.",
-      "هەلسەنگاندنا ب دەستی ژ لایێ ئەدمین بۆ قسەکرن و نڤیسینێ.",
-      "پەیجا ئەنجاما ب 4 بەشان + کۆیا کۆتایی.",
-    ]},
-    { icon: "📊", title: "پەڕوپاژنا ئەدمین", items: [
-      "ئامار، خشتەیا دابەشکرنا پلان، پاڵاڤتن و ڕیزکرن.",
-      "کارتێن داواکاران ب دویمای، ئامێرێن هەر داواکاری، ئەرشیفا تاقیکردنێن کۆن.",
-      "تاقیکردنەکا نوی و ژێبرنا هەمی تاقیکردنان.",
-    ]},
-    { icon: "📖", title: "فایلێ ڕاهێنانێ", items: [
-      "بارکرن وەکی PDF یان وێنە، هەلبژارتنا شێوازێ نیشاندانێ.",
-      "شاشەیەکا تەواو ب زوم و لمسکرن، دگەل نیشانا ئاوی.",
-      "شوپاندنا وردی بۆ ژمارا کرنا ڤەکرنێ و دەمێ خوندنێ.",
-    ]},
-    { icon: "🎨", title: "دیزاین و گونجانێ", items: [
-      "فۆنتێ Cairo و ڕەنگێن یەکسان، دوگمەیێن گلۆڤ.",
-      "دگونجیت دگەل هەمی قەبارێن شاشەی.",
-    ]},
-    { icon: "🛠️", title: "بنیاتێ تەکنیکی", items: [
-      "Firebase بۆ چوونەژوور و داتابەیس، Google Drive بۆ پاشکەفتکرنا فایلان.",
     ]},
   ],
 };
@@ -2767,20 +2695,12 @@ function renderQuestionForm(existing) {
       <label>${L("category")}
         <select name="category">${CATEGORIES.map((c) => `<option value="${c}">${L(c)}</option>`).join("")}</select>
       </label>
-      <label>${L("displayLang")}
-        <select name="displayLang">
-          <option value="">${L("displayLangAuto")}</option>
-          <option value="ar">${L("displayLangAr")}</option>
-          <option value="ku">${L("displayLangKu")}</option>
-        </select>
-      </label>
       <!-- Hidden for section=listening (see sectionSel.onchange below): the
            audio clip itself is the question there — showing a text version
            next to it would let a candidate answer from reading it instead of
            actually understanding the spoken Arabic, which defeats the
            section's whole purpose. -->
       <label id="text-ar-label">${L("questionTextAr")}<input name="text_ar" required value="${escapeHtml(existing?.text?.ar || "")}" /></label>
-      <label id="text-ku-label">${L("questionTextKu")}<input name="text_ku" value="${escapeHtml(existing?.text?.ku || "")}" /></label>
       <div id="type-extra"></div>
       <div class="err" id="q-err"></div>
       <button type="submit" class="primary">${L("save")}</button>
@@ -2793,20 +2713,15 @@ function renderQuestionForm(existing) {
     typeSel.value = existing.type;
     sectionSel.value = existing.section || "reading";
     wrap.querySelector("[name=category]").value = existing.category || CATEGORIES[0];
-    wrap.querySelector("[name=displayLang]").value = existing.displayLang || "";
   }
-  wireAutoFill(wrap.querySelector("[name=text_ar]"), wrap.querySelector("[name=text_ku]"));
   const textArLabel = wrap.querySelector("#text-ar-label");
-  const textKuLabel = wrap.querySelector("#text-ku-label");
   const textArInput = wrap.querySelector("[name=text_ar]");
-  const textKuInput = wrap.querySelector("[name=text_ku]");
   function renderExtra() {
     extra.innerHTML = "";
     const type = typeSel.value;
     const section = sectionSel.value;
     const isListening = section === "listening" && (type === "mcq" || type === "truefalse");
     textArLabel.style.display = isListening ? "none" : "";
-    textKuLabel.style.display = isListening ? "none" : "";
     textArInput.required = !isListening;
     if (isListening && !textArInput.value) {
       // A placeholder, not shown to the candidate (the exam screen skips
@@ -2814,17 +2729,13 @@ function renderQuestionForm(existing) {
       // — only exists so the admin's own question-bank list has something
       // readable to identify the question by.
       textArInput.value = L("listeningQuestionPlaceholder");
-      textKuInput.value = L("listeningQuestionPlaceholder");
-    } else if (!isListening
-      && textArInput.value === L("listeningQuestionPlaceholder")
-      && textKuInput.value === L("listeningQuestionPlaceholder")) {
+    } else if (!isListening && textArInput.value === L("listeningQuestionPlaceholder")) {
       // Switching the section away from listening while the placeholder is
       // still sitting in the (now visible again) field used to save it
       // verbatim as the question's real text if the admin didn't notice and
       // overwrite it by hand — clearing it back out forces a real value
       // through the field's own "required" validation instead.
       textArInput.value = "";
-      textKuInput.value = "";
     }
     if (type === "speaking" || type === "writing") {
       extra.appendChild(el(`<p class="hint">${L("scoreOutOf", { max: POINTS_PER_QUESTION })} — ${L("manualGrading")}.</p>`));
@@ -2844,8 +2755,7 @@ function renderQuestionForm(existing) {
               </label>
               ${L("options")} ${i + 1}
             </legend>
-            <input name="opt_ar_${i}" placeholder="AR" />
-            <input name="opt_ku_${i}" placeholder="KU" />
+            <input name="opt_ar_${i}" placeholder="${L("options")} ${i + 1}" />
           </fieldset>
         `);
         extra.appendChild(optSet);
@@ -2862,17 +2772,10 @@ function renderQuestionForm(existing) {
       if (existing && (existing.type === "mcq" || existing.type === "image") && existing.options) {
         existing.options.forEach((o, i) => {
           extra.querySelector(`[name=opt_ar_${i}]`).value = o.ar || "";
-          extra.querySelector(`[name=opt_ku_${i}]`).value = o.ku || "";
         });
         extra.querySelector(`[name=correctIndex][value="${existing.correctIndex ?? 0}"]`).checked = true;
         const imgSel = extra.querySelector("[name=imagePath]");
         if (imgSel && existing.imagePath) imgSel.value = existing.imagePath;
-      }
-      // Wired after any existing values are populated above, so editing an
-      // already-translated question doesn't mistake real translations for
-      // auto-filled placeholders.
-      for (let i = 0; i < 4; i++) {
-        wireAutoFill(extra.querySelector(`[name=opt_ar_${i}]`), extra.querySelector(`[name=opt_ku_${i}]`));
       }
     } else if (type === "truefalse") {
       extra.appendChild(el(`
@@ -2888,17 +2791,9 @@ function renderQuestionForm(existing) {
       }
     }
     if (section === "reading") {
-      // Wrapped in one <div> — el() only returns the FIRST of several
-      // sibling root elements, so without this wrapper the Ku/En passage
-      // fields below were silently never attached to the DOM at all.
-      const passageWrap = el(`
-        <div>
-          <label>${L("passageAr")}<textarea name="passage_ar" rows="3">${escapeHtml(existing?.passage?.ar || "")}</textarea></label>
-          <label>${L("passageKu")}<textarea name="passage_ku" rows="3">${escapeHtml(existing?.passage?.ku || "")}</textarea></label>
-        </div>
-      `);
-      extra.appendChild(passageWrap);
-      wireAutoFill(passageWrap.querySelector("[name=passage_ar]"), passageWrap.querySelector("[name=passage_ku]"));
+      extra.appendChild(el(`
+        <label>${L("passageAr")}<textarea name="passage_ar" rows="3">${escapeHtml(existing?.passage?.ar || "")}</textarea></label>
+      `));
     }
     if (section === "listening") {
       const audioWrap = el(`
@@ -2940,14 +2835,11 @@ function renderQuestionForm(existing) {
       section: f.get("section"),
       category: f.get("category"),
       points: POINTS_PER_QUESTION,
-      displayLang: f.get("displayLang") || null,
-      text: { ar: f.get("text_ar"), ku: f.get("text_ku") || f.get("text_ar") },
+      text: { ar: f.get("text_ar") },
     };
     if (!existing) { data.active = true; data.createdAt = serverTimestamp(); }
     if (type === "mcq" || type === "image") {
-      const options = [0,1,2,3].map((i) => ({
-        ar: f.get(`opt_ar_${i}`) || "", ku: f.get(`opt_ku_${i}`) || f.get(`opt_ar_${i}`) || "",
-      }));
+      const options = [0,1,2,3].map((i) => ({ ar: f.get(`opt_ar_${i}`) || "" }));
       const correctIndex = Number(f.get("correctIndex"));
       // The admin always types the correct answer into option 1 while
       // building the question — habit, not a rule the exam should reflect —
@@ -2966,8 +2858,8 @@ function renderQuestionForm(existing) {
       data.correctAnswer = f.get("correctAnswer") === "true";
     }
     if (data.section === "reading" && (type === "mcq" || type === "truefalse" || type === "image")) {
-      const pAr = f.get("passage_ar"), pKu = f.get("passage_ku");
-      if (pAr || pKu) data.passage = { ar: pAr || "", ku: pKu || pAr || "" };
+      const pAr = f.get("passage_ar");
+      if (pAr) data.passage = { ar: pAr };
     }
     if (data.section === "listening" && pendingAudioFileId) data.audioFileId = pendingAudioFileId;
     try {
@@ -3002,15 +2894,6 @@ let speakingState = {};
 let mediaRecorder = null;
 let recordedChunks = [];
 
-// A question can force a specific display language for candidates
-// (q.displayLang), overriding whatever language they picked from the flag
-// switcher — used e.g. to keep a listening/reading/speaking question in one
-// language regardless of UI language. Falls back to Arabic, not the
-// candidate's own language: every section should default to Arabic unless
-// the admin explicitly marks a specific question Kurdish, so a candidate
-// who happens to have the Kurdish flag selected doesn't see, say, a
-// speaking prompt in Kurdish just because that's their UI language.
-function qLang(q) { return q.displayLang || "ar"; }
 
 function groupBySections(activeQs) {
   const order = state.examConfig.sectionOrder;
@@ -3227,13 +3110,13 @@ function renderExam() {
         · ${L("questionOf", { n: examQIndex + 1, total: curSection.qs.length })}
       </div>
       <div class="card q-card-big">
-        ${q.passage?.[qLang(q)] || q.passage?.ar ? `<div class="passage">${escapeHtml(q.passage[qLang(q)] || q.passage.ar)}</div>` : ""}
+        ${q.passage?.ar ? `<div class="passage">${escapeHtml(q.passage.ar)}</div>` : ""}
         <div id="q-audio-host"></div>
         <!-- Skipped for an audio question: q.text there is only an internal
              placeholder for the admin's own bank list (see renderQuestionForm),
              not real question text — showing it would also let a candidate
              answer from reading it instead of actually listening. -->
-        ${q.audioFileId ? "" : `<div class="q-text">${escapeHtml(q.text[qLang(q)] || q.text.ar)}</div>`}
+        ${q.audioFileId ? "" : `<div class="q-text">${escapeHtml(q.text.ar)}</div>`}
         ${q.imagePath ? `<img class="q-image" src="${q.imagePath}" />` : ""}
         <div id="q-options"></div>
       </div>
@@ -3292,7 +3175,7 @@ function renderQuestionAnswerUI(optHost, q) {
   }
   const opts = q.type === "truefalse"
     ? [{ label: L("yes"), value: true }, { label: L("no"), value: false }]
-    : q.options.map((o, i) => ({ label: o[qLang(q)] || o.ar, value: i }));
+    : q.options.map((o, i) => ({ label: o.ar, value: i }));
   opts.forEach((o) => {
     const checked = examLocalAnswers[q.id] === o.value;
     const optEl = el(`<label class="option ${checked ? "picked" : ""}"><input type="radio" name="ans" ${checked ? "checked" : ""}/> ${escapeHtml(o.label)}</label>`);
@@ -3676,7 +3559,7 @@ function renderResult() {
         const isRight = given === correct;
         card.appendChild(el(`
           <div class="review-row ${isRight ? "ok" : "bad"}">
-            <b>${i + 1}.</b> ${escapeHtml(q.text[qLang(q)] || q.text.ar)}
+            <b>${i + 1}.</b> ${escapeHtml(q.text.ar)}
           </div>
         `));
       });
@@ -3691,7 +3574,7 @@ function renderResult() {
       manualQs.forEach((q, i) => {
         const ans = manualAnswers[q.id];
         const row = el(`<div class="review-row"></div>`);
-        row.appendChild(el(`<div><b>${i + 1}.</b> ${escapeHtml(q.text[qLang(q)] || q.text.ar)}</div>`));
+        row.appendChild(el(`<div><b>${i + 1}.</b> ${escapeHtml(q.text.ar)}</div>`));
         if (q.type === "speaking") {
           if (ans?.fileId || ans?.audioUrl) {
             const audioEl = el(`<audio controls></audio>`);
@@ -3869,8 +3752,8 @@ async function loadMaterialAndRender(body, root) {
       const token = await state.user.getIdToken();
       // cMapUrl/standardFontDataUrl: without these, pdf.js can't substitute
       // glyphs for fonts that aren't fully embedded in the PDF (common with
-      // Kurdish/Arabic-script documents) — text renders as garbled boxes
-      // instead of the real characters. Even with these, some PDFs still
+      // Arabic-script documents) — text renders as garbled boxes instead
+      // of the real characters. Even with these, some PDFs still
       // don't render cleanly (embedded-font quirks pdf.js can't fix) — the
       // image-pages mode above exists specifically as a reliable fallback.
       materialPdfDoc = await pdfjsLib.getDocument({
@@ -3919,7 +3802,7 @@ async function loadMaterialAndRender(body, root) {
   // a real <img> (not drawn into a canvas): the browser downscales a
   // 2500px-wide scan to phone width far better than canvas drawImage does,
   // and handles the device's pixel ratio for free. Canvas downscaling was
-  // what turned the Kurdish text into unreadable mush.
+  // what turned scanned Arabic text into unreadable mush.
   const imageUrlCache = {};
   async function getImageUrl(n) {
     if (imageUrlCache[n]) return imageUrlCache[n];
