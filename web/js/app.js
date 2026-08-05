@@ -127,6 +127,10 @@ const SECTIONS = ["reading", "listening", "speaking", "writing"];
 // two reading questions could silently be worth different amounts.
 const POINTS_PER_QUESTION = 2;
 const DEFAULT_SECTION_MINUTES = { reading: 20, listening: 15, speaking: 10, writing: 20 };
+// How long a candidate has, from the moment the admin publishes the exam
+// (examConfig.examOpenAtMs), to actually press "بدء الاختبار" before
+// they're marked absent instead.
+const EXAM_LATE_GRACE_MS = 5 * 60 * 1000;
 // 0 = no limit, use every active question in that section.
 const DEFAULT_SECTION_COUNTS = { reading: 0, listening: 0, speaking: 0, writing: 0 };
 
@@ -502,6 +506,12 @@ function mergeExamConfig(data) {
     // the admin turns off here is both hidden AND not required. On by
     // default so the feature works immediately without extra setup.
     profileFields: { ...DEFAULT_PROFILE_FIELDS, ...(data?.profileFields || {}) },
+    // When the admin clicked "نشر الامتحان" — ms epoch, or 0 if the exam
+    // hasn't been opened yet. Candidates can't see the "بدء الاختبار"
+    // button at all before this is set (see renderExam's not_started
+    // branch), and get a EXAM_LATE_GRACE_MS window from this moment to
+    // actually start before they're marked absent.
+    examOpenAtMs: Number.isInteger(data?.examOpenAtMs) ? data.examOpenAtMs : 0,
   };
 }
 function watchExamConfig() {
@@ -1010,6 +1020,52 @@ function renderExamSettingsTab() {
   const cfg = state.examConfig;
   const wrap = el(`<div></div>`);
 
+  // ---- Publish the exam (gates the "بدء الاختبار" button for everyone) ----
+  // Candidates can't see the start button at all until this is set (see
+  // renderExam's not_started branch) — before that they only see a waiting
+  // message. From this moment, EXAM_LATE_GRACE_MS/60000 minutes later,
+  // anyone who still hasn't pressed start is auto-marked absent, so the
+  // published time is a real "the exam starts now" signal, not just a
+  // visibility toggle.
+  const graceMin = EXAM_LATE_GRACE_MS / 60000;
+  const publishCard = el(`<div class="card"><h3>${L("publishExamTitle")}</h3></div>`);
+  const publishStatus = el(`<p class="hint" id="publish-status"></p>`);
+  publishCard.appendChild(publishStatus);
+  function renderPublishStatus() {
+    if (!cfg.examOpenAtMs) {
+      publishStatus.textContent = L("publishExamNotYet");
+      return;
+    }
+    const openedStr = fmtDateTime(new Date(cfg.examOpenAtMs));
+    const deadlineStr = fmtDateTime(new Date(cfg.examOpenAtMs + EXAM_LATE_GRACE_MS));
+    publishStatus.textContent = Date.now() > cfg.examOpenAtMs + EXAM_LATE_GRACE_MS
+      ? L("publishExamGraceEnded", { time: openedStr })
+      : L("publishExamOpen", { time: openedStr, deadline: deadlineStr });
+  }
+  renderPublishStatus();
+  const publishActions = el(`<div class="row-actions"></div>`);
+  const publishBtn = el(`<button type="button" class="primary">${L("publishExamBtn", { n: graceMin })}</button>`);
+  publishBtn.onclick = async () => {
+    if (!confirm(L("publishExamConfirm", { n: graceMin }))) return;
+    const examOpenAtMs = Date.now();
+    await setDoc(doc(db, "settings", "examConfig"), { examOpenAtMs }, { merge: true });
+    state.examConfig = { ...state.examConfig, examOpenAtMs };
+    setState({});
+  };
+  publishActions.appendChild(publishBtn);
+  if (cfg.examOpenAtMs) {
+    const unpublishBtn = el(`<button type="button" class="ghost danger">${L("unpublishExamBtn")}</button>`);
+    unpublishBtn.onclick = async () => {
+      if (!confirm(L("unpublishExamConfirm"))) return;
+      await setDoc(doc(db, "settings", "examConfig"), { examOpenAtMs: 0 }, { merge: true });
+      state.examConfig = { ...state.examConfig, examOpenAtMs: 0 };
+      setState({});
+    };
+    publishActions.appendChild(unpublishBtn);
+  }
+  publishCard.appendChild(publishActions);
+  wrap.appendChild(publishCard);
+
   // ---- Site-wide font ----
   const fontForm = el(`
     <form id="font-form" class="card">
@@ -1296,8 +1352,8 @@ function renderExamSettingsTab() {
   return wrap;
 }
 
-const EXAM_STATUS_KEY = { not_started: "notStarted", in_progress: "inProgress", submitted: "submitted", graded: "graded" };
-const STATUS_BADGE_CLASS = { not_started: "not-started", in_progress: "in-progress", submitted: "submitted", graded: "graded" };
+const EXAM_STATUS_KEY = { not_started: "notStarted", in_progress: "inProgress", submitted: "submitted", graded: "graded", absent: "absentLabel" };
+const STATUS_BADGE_CLASS = { not_started: "not-started", in_progress: "in-progress", submitted: "submitted", graded: "graded", absent: "blocked" };
 function statusLabel(c) {
   if (c.blocked) return L("blocked");
   return L(EXAM_STATUS_KEY[c.examStatus] || "notStarted");
@@ -3078,6 +3134,9 @@ function renderExam() {
     stopExamTimer();
     return renderResult();
   }
+  if (state.profile.examStatus === "absent") {
+    return el(`<div class="card center-card"><h2>${L("absentTitle")}</h2><p>${L("absentMessage")}</p></div>`);
+  }
   const activeQs = state.questions.filter((q) => q.active !== false);
   if (!state._examLoaded) {
     loadQuestionsForCandidate();
@@ -3122,14 +3181,38 @@ function renderExam() {
     // it still looked like the old design here after the card was built.
     wrap.appendChild(buildMaterialEntryCard());
     wrap.appendChild(renderCredentialsCard(state.profile));
+
+    // The exam only becomes reachable once the admin explicitly publishes
+    // it (examConfig.examOpenAtMs) — before that there's no "بدء الاختبار"
+    // button to show at all, just a waiting message. From the moment it's
+    // published, a candidate has EXAM_LATE_GRACE_MS to actually press
+    // start; missing that window marks them absent — no score, no way
+    // back into this screen — instead of leaving the button sitting there
+    // forever for someone who simply wasn't there when the exam opened.
+    const examOpenAtMs = state.examConfig.examOpenAtMs || 0;
+    const isLate = examOpenAtMs > 0 && Date.now() > examOpenAtMs + EXAM_LATE_GRACE_MS;
+    if (isLate) {
+      // Best-effort, fire-and-forget: the screen below already reflects
+      // "absent" immediately regardless of whether/when this write lands,
+      // same reasoning as the presence heartbeat elsewhere in this file.
+      updateDoc(doc(db, "users", state.profile.id), { examStatus: "absent" }).catch(() => {});
+      wrap.appendChild(el(`
+        <div class="card center-card"><h2>${L("absentTitle")}</h2><p>${L("absentMessage")}</p></div>
+      `));
+      return wrap;
+    }
     const actionsCard = el(`
       <div class="card center-card">
         <h2>${L("appName")}</h2>
-        <button id="start-btn" class="primary">${L("startExam")}</button>
+        ${examOpenAtMs
+          ? `<button id="start-btn" class="primary">${L("startExam")}</button>`
+          : `<p class="hint">${L("examNotOpenYet")}</p>`}
       </div>
     `);
     wrap.appendChild(actionsCard);
-    wrap.querySelector("#start-btn").onclick = async () => {
+    const startBtn = wrap.querySelector("#start-btn");
+    if (!startBtn) return wrap;
+    startBtn.onclick = async () => {
       // Manual mode: every candidate gets the exact same admin-picked set.
       // Random mode: sample once, here, from the full pool — sectionCounts
       // of 0 means "use everything" (pickRandom returns the whole array).
