@@ -3436,19 +3436,13 @@ async function submitExam(activeQs) {
   // Note: score fields intentionally live only on the attempts doc —
   // candidates can't write "score" on their own users doc (see firestore.rules).
   await updateDoc(doc(db, "users", state.profile.id), { examStatus: "submitted" });
-  // Publishes the leaderboard entry immediately when there was nothing left
-  // to grade — mirrors the same best-effort sync call the admin's manual
-  // grading save makes (see renderCandidateResultPanel). The server only
-  // ever trusts the score it reads back from this very attempts doc, never
-  // anything the client sends, so a candidate calling this for their own
-  // uid can't fake a result.
-  if (!hasManual && ADMIN_SERVER_URL) {
-    state.user.getIdToken().then((token) =>
-      fetch(`${ADMIN_SERVER_URL}/leaderboard/sync/${state.profile.id}`, {
-        method: "POST", headers: { Authorization: `Bearer ${token}` },
-      })
-    ).catch(() => {});
-  }
+  // Deliberately does NOT publish to the leaderboard here, even for a
+  // reading-only exam with nothing left to grade — per explicit request,
+  // nobody's result goes on the public board until the admin publishes it
+  // themselves (the bulk "نشر بلوحة النتائج" button, or the per-candidate
+  // grading save for exams with a manual section). Submitting the exam
+  // only ever moves examStatus to "submitted"; only an admin action can
+  // move it to "graded".
   setState({ profile: { ...state.profile, examStatus: "submitted" } });
 }
 
