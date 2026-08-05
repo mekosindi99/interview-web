@@ -1444,7 +1444,7 @@ function renderCandidatesTab() {
     historyBtn.onclick = () => setState({ adminTab: "candidates", viewCandidateHistory: c.id });
     actions.appendChild(historyBtn);
     if (c.profileCompleted) {
-      const profileBtn = makeChip("📋", L("profileFieldsTitle"));
+      const profileBtn = makeChip("📋", L("profileAndCvBtn"));
       profileBtn.onclick = () => setState({ adminTab: "candidates", viewCandidateProfile: c.id });
       actions.appendChild(profileBtn);
     }
