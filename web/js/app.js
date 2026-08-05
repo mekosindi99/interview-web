@@ -2034,7 +2034,17 @@ function renderCandidateResultPanel(c) {
           row.appendChild(el(`<p class="writing-answer-view">${escapeHtml(ans?.text || "")}</p>`));
           if (!ans?.text) row.appendChild(el(`<p class="hint">${L("noAnswerGiven")}</p>`));
         }
-        const scoreInput = el(`<label>${L("scoreOutOf", { max: q.points ?? POINTS_PER_QUESTION })}<input type="number" min="0" max="${q.points ?? POINTS_PER_QUESTION}" step="1" name="score_${q.id}" value="${manualScores[q.id] ?? 0}" /></label>`);
+        // A dropdown, not a number input: a number field lets the admin type
+        // (or scroll/spin past) any value at all, including something above
+        // the question's own max — reported exactly that way, a 4 saved
+        // against a 2-point question. A select can only ever offer the
+        // values that are actually valid, so there's nothing left to clamp
+        // after the fact.
+        const maxPts = q.points ?? POINTS_PER_QUESTION;
+        const currentScore = manualScores[q.id] ?? 0;
+        const scoreOptions = Array.from({ length: maxPts + 1 }, (_, v) => v)
+          .map((v) => `<option value="${v}" ${v === currentScore ? "selected" : ""}>${v}</option>`).join("");
+        const scoreInput = el(`<label>${L("scoreOutOf", { max: maxPts })}<select name="score_${q.id}">${scoreOptions}</select></label>`);
         row.appendChild(scoreInput);
         gradingForm.appendChild(row);
       });
