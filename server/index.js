@@ -238,6 +238,14 @@ app.post("/leaderboard/sync/:uid", requireSelfOrAdmin("uid"), async (req, res) =
       await db.collection("attempts").doc(uid).update({ examStatus: "graded" });
       attempt = { ...attempt, examStatus: "graded" };
     }
+    // Mirrors "graded" onto the candidate's own profile doc too — the
+    // client's admin candidate list (and its WhatsApp-send button) reads
+    // users/{uid}.examStatus, not attempts/{uid}.examStatus, and this is
+    // the only path (bulk publish, or a reading-only exam's first sync)
+    // that promotes a manual-grading-free exam to graded at all.
+    if (attempt.examStatus === "graded" && userSnap.data().examStatus !== "graded") {
+      await db.collection("users").doc(uid).update({ examStatus: "graded" }).catch(() => {});
+    }
     if (attempt.examStatus !== "graded") {
       // Genuinely still pending manual grading — make sure any previous
       // entry is gone instead of leaving a stale score on the board.

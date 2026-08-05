@@ -529,6 +529,24 @@ async function loadExamConfig() {
 // email address that never leaves the client.
 const PHONE_DOMAIN = "phone.interview.local";
 function phoneToEmail(phone) { return `${phone}@${PHONE_DOMAIN}`; }
+
+// wa.me needs the full international number, no leading 0 — Iraqi numbers
+// are stored/validated as local 11-digit (isPhone), always starting with 0.
+function phoneToWaNumber(phone) { return `964${String(phone).replace(/^0/, "")}`; }
+
+// Opens WhatsApp (app on mobile, web.whatsapp.com on desktop) with the
+// message already typed in, addressed to the candidate — the admin still
+// has to press send themselves inside WhatsApp. Deliberately not a fully
+// automated send: that needs the paid WhatsApp Business API (a Meta
+// business account, a dedicated verified phone number, per-message cost),
+// which is a real infrastructure commitment this project has avoided
+// everywhere else (Drive instead of paid Firebase Storage, free Render
+// keep-alive instead of a paid always-on plan) — this is the zero-setup,
+// zero-cost equivalent, at the cost of one manual tap per candidate.
+function buildResultWhatsAppLink(c) {
+  const text = L("resultWhatsAppMessage", { name: c.name, phone: c.phone, code: c.code, url: location.origin });
+  return `https://wa.me/${phoneToWaNumber(c.phone)}?text=${encodeURIComponent(text)}`;
+}
 function isPhone(v) { return /^\d{11}$/.test(v); }
 
 // ---------- Device fingerprint (best-effort abuse deterrent) ----------
@@ -1437,6 +1455,15 @@ function renderCandidatesTab() {
       btn.onclick = () => setState({ adminTab: "candidates", viewCandidate: c.id });
       actions.appendChild(btn);
     }
+    // Only once the result is actually graded/published — sending this
+    // beforehand would tell a candidate to go check a result that isn't on
+    // the board yet (see the leaderboard-publish gating in submitExam and
+    // the manual-grading save above).
+    if (c.examStatus === "graded" && c.phone) {
+      const waBtn = makeChip("📤", L("sendWhatsAppBtn"));
+      waBtn.onclick = () => window.open(buildResultWhatsAppLink(c), "_blank", "noopener");
+      actions.appendChild(waBtn);
+    }
     const devicesBtn = makeChip("📱", L("viewDevices"));
     devicesBtn.onclick = () => setState({ adminTab: "candidates", viewCandidateDevices: c.id });
     actions.appendChild(devicesBtn);
@@ -1868,6 +1895,12 @@ function renderCandidateResultPanel(c) {
           gradedBy: state.user.uid,
           gradedAt: serverTimestamp(),
         });
+        // "Graded" lived only on the attempts doc — the candidate's own
+        // users/{uid}.examStatus (what the candidate-card badge and the new
+        // WhatsApp-send button below both key off) never advanced past
+        // "submitted", so a candidate never visibly showed as graded in the
+        // admin's own candidate list even after being fully graded.
+        await updateDoc(doc(db, "users", c.id), { examStatus: "graded" }).catch(() => {});
         // Publishes the public leaderboard entry (server-side, reads the
         // score back from Firestore itself — see /leaderboard/sync in
         // server/index.js). Best-effort: the grading itself already saved
