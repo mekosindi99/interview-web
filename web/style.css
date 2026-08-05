@@ -349,40 +349,55 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .brand { font-weight: 700; }
 .who { color: var(--muted); font-size: 13px; flex: 1; text-align: center; }
 
-/* Admin section nav: a sidebar on wide screens (the flat wrapping row of
-   pill buttons it replaced got messy once enough tabs existed to wrap onto
-   a second, uneven line) so every section is a fixed, always-visible target
-   instead of a line that reflows depending on which tabs happen to be
-   visible for the signed-in role. Collapses to the original horizontal
-   scrollable row on narrow screens, where a fixed side column would eat too
-   much width from the actual content. */
-.admin-shell { display: flex; gap: 16px; align-items: flex-start; }
-.admin-sidebar {
-  display: flex; flex-direction: column; gap: 4px;
-  width: 220px; flex-shrink: 0;
+/* Admin section nav: a hamburger button opens a slide-out drawer holding
+   every section, plus the theme toggle and logout (both moved in here from
+   the old standing top bar, per explicit request — one menu instead of two
+   separate places for the same handful of controls). Replaces an earlier
+   always-visible sidebar: cramped/wrapping once several icon+label pairs
+   had to fit across a phone-width strip, which is exactly what was
+   reported as messy. */
+.admin-topbar {
+  display: flex; align-items: center;
   background: var(--card); border: 1px solid var(--border); border-radius: 12px;
-  padding: 10px; position: sticky; top: 12px;
+  padding: 8px; margin-bottom: 12px;
 }
+.admin-hamburger-btn {
+  width: 42px; height: 42px; padding: 0; font-size: 20px; line-height: 1;
+  background: var(--bg); border-radius: 10px; min-height: 0;
+}
+.admin-drawer-backdrop {
+  position: fixed; inset: 0; background: rgba(0, 0, 0, .4);
+  z-index: 40; animation: admin-drawer-fade .15s ease;
+}
+@keyframes admin-drawer-fade { from { opacity: 0; } to { opacity: 1; } }
+.admin-drawer {
+  position: fixed; right: 0; top: 0; bottom: 0; z-index: 41;
+  width: 260px; max-width: 82vw; box-sizing: border-box;
+  display: flex; flex-direction: column; gap: 4px; overflow-y: auto;
+  background: var(--card); padding: 14px 10px;
+  /* right:0 pins it to the physical right edge — where the hamburger
+     button sits, since the whole site is Arabic/RTL-only. Closed state
+     translates it a full width further right, off-screen; hidden via a
+     transform (not display:none) so .open can transition smoothly instead
+     of just snapping in/out. */
+  transform: translateX(100%);
+  transition: transform .2s ease;
+  box-shadow: -4px 0 20px rgba(0, 0, 0, .15);
+}
+.admin-drawer.open { transform: translateX(0); }
+.admin-drawer-divider { border-top: 1px solid var(--border); margin: 8px 4px; }
 .admin-sidebar-btn {
   display: flex; align-items: center; gap: 10px;
   background: transparent; border: none; border-radius: 8px;
-  padding: 10px 12px; font-size: 14px; font-weight: 600; color: var(--text);
-  text-align: start; justify-content: flex-start; min-height: 0;
+  padding: 12px; font-size: 14px; font-weight: 600; color: var(--text);
+  text-align: start; justify-content: flex-start; min-height: 0; flex-shrink: 0;
 }
 .admin-sidebar-btn:hover { background: var(--bg); }
 .admin-sidebar-btn.active { background: var(--primary); color: #fff; }
-.admin-sidebar-icon { font-size: 17px; flex-shrink: 0; line-height: 1; }
+.admin-sidebar-btn.danger { color: var(--bad); }
+.admin-sidebar-icon { font-size: 17px; flex-shrink: 0; line-height: 1; width: 20px; text-align: center; }
 .admin-sidebar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.admin-main { flex: 1; min-width: 0; }
-@media (max-width: 780px) {
-  .admin-shell { flex-direction: column; }
-  .admin-sidebar {
-    width: 100%; flex-direction: row; overflow-x: auto; position: static;
-    -webkit-overflow-scrolling: touch;
-  }
-  .admin-sidebar-btn { flex-shrink: 0; }
-  .admin-sidebar-label { white-space: nowrap; }
-}
+.admin-main { min-width: 0; }
 
 .table-scroll { overflow-x: auto; border-radius: 12px; margin-bottom: 16px; -webkit-overflow-scrolling: touch; }
 .table-scroll table.grid { margin-bottom: 0; }

@@ -650,7 +650,12 @@ function render() {
   document.documentElement.lang = state.lang;
   document.documentElement.dir = DIR[state.lang];
   root.innerHTML = "";
-  root.appendChild(langSwitcher());
+  // Staff get their own hamburger-menu bar instead (built inside
+  // renderAdminShell) — logout and the theme toggle live inside that
+  // drawer now, alongside the section nav, so this top bar would just be
+  // a second, redundant place to find the same two buttons.
+  const isStaffView = state.profile?.role === "admin" || state.profile?.role === "coadmin";
+  if (!isStaffView) root.appendChild(langSwitcher());
   // Everything below can throw on some edge-case state combination — and
   // when it does, the *symptom* is much worse than a visible error: since
   // every button handler in this app ends with a synchronous render()
@@ -881,22 +886,55 @@ function renderAdminShell() {
   const isAdmin = state.profile.role === "admin";
   const tab = state.adminTab || "candidates";
   const visibleTabs = ADMIN_TABS.filter((t) => isAdmin || !t.adminOnly);
+  const menuOpen = !!state.adminMenuOpen;
+  // Hamburger-triggered slide-out drawer (per explicit request, replacing
+  // both the standing top bar and the always-visible sidebar) — nav
+  // sections, the theme toggle, and logout all live in the one drawer, open
+  // and closed by the same ☰ button. A backdrop click or picking a section
+  // both close it, same as any standard drawer menu.
   const wrap = el(`
     <div class="admin-shell">
-      <nav class="admin-sidebar">
+      <div class="admin-topbar">
+        <button type="button" class="admin-hamburger-btn" aria-label="${L("menuLabel")}">☰</button>
+      </div>
+      <div class="admin-drawer-backdrop" ${menuOpen ? "" : "hidden"}></div>
+      <nav class="admin-drawer ${menuOpen ? "open" : ""}">
         ${visibleTabs.map((t) => `
           <button data-tab="${t.id}" class="admin-sidebar-btn ${tab === t.id ? "active" : ""}">
             <span class="admin-sidebar-icon">${t.icon}</span>
             <span class="admin-sidebar-label">${L(t.labelKey)}</span>
           </button>
         `).join("")}
+        <div class="admin-drawer-divider"></div>
+        <button type="button" class="admin-sidebar-btn" id="admin-drawer-theme">
+          <span class="admin-sidebar-icon">${state.theme === "dark" ? "☀️" : "🌙"}</span>
+          <span class="admin-sidebar-label">${L("toggleTheme")}</span>
+        </button>
+        <button type="button" class="admin-sidebar-btn danger" id="admin-drawer-logout">
+          <span class="admin-sidebar-icon">🚪</span>
+          <span class="admin-sidebar-label">${L("logout")}</span>
+        </button>
       </nav>
       <main class="admin-main" id="tab-body"></main>
     </div>
   `);
+  const closeMenu = () => setState({ adminMenuOpen: false });
+  wrap.querySelector(".admin-hamburger-btn").onclick = () => setState({ adminMenuOpen: !menuOpen });
+  wrap.querySelector(".admin-drawer-backdrop").onclick = closeMenu;
   wrap.querySelectorAll("[data-tab]").forEach((b) => {
-    b.onclick = () => setState({ adminTab: b.dataset.tab });
+    b.onclick = () => setState({ adminTab: b.dataset.tab, adminMenuOpen: false });
   });
+  wrap.querySelector("#admin-drawer-theme").onclick = () => {
+    const next = state.theme === "dark" ? "light" : "dark";
+    localStorage.setItem("theme", next);
+    setState({ theme: next, adminMenuOpen: false });
+  };
+  // Same real, immediate presence sync as the candidate-facing logout
+  // button (see langSwitcher) — writes online:false before signOut() runs,
+  // since a signed-out user can no longer write to their own doc at all.
+  wrap.querySelector("#admin-drawer-logout").onclick = () => {
+    stopPresenceHeartbeat(true).finally(() => signOut(auth));
+  };
   const body = wrap.querySelector("#tab-body");
   if (tab === "candidates") body.appendChild(renderCandidatesTab());
   else if (tab === "questions") body.appendChild(renderQuestionsTab());

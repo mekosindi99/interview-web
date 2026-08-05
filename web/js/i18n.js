@@ -18,6 +18,7 @@ export const t = {
     loginError: "الإيميل أو الكود غير صحيح",
     logout: "خروج",
     toggleTheme: "الوضع الداكن",
+    menuLabel: "القائمة",
     back: "رجوع",
     total: "المجموع",
     leaderboardBtn: "نتائج الجميع",
