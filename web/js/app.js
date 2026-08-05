@@ -1016,19 +1016,20 @@ function renderProfileFieldsForm() {
   return profileForm;
 }
 
-function renderExamSettingsTab() {
+// Publish/unpublish the exam (gates the "بدء الاختبار" button for
+// everyone) — pulled out to a standalone function so it can live in the
+// Candidates tab, grouped with the other exam-lifecycle bulk actions
+// (امتحان جديد / تصفير كل الامتحانات / نشر النتائج للمشتركين) instead of
+// sitting alone in a different tab. Those buttons all act on every
+// candidate at once and are easy to mix up which does what, per explicit
+// request to gather them in one place.
+function renderPublishExamCard() {
   const cfg = state.examConfig;
-  const wrap = el(`<div></div>`);
-
-  // ---- Publish the exam (gates the "بدء الاختبار" button for everyone) ----
-  // Candidates can't see the start button at all until this is set (see
-  // renderExam's not_started branch) — before that they only see a waiting
-  // message. From this moment, EXAM_LATE_GRACE_MS/60000 minutes later,
-  // anyone who still hasn't pressed start is auto-marked absent, so the
-  // published time is a real "the exam starts now" signal, not just a
-  // visibility toggle.
   const graceMin = EXAM_LATE_GRACE_MS / 60000;
-  const publishCard = el(`<div class="card"><h3>${L("publishExamTitle")}</h3></div>`);
+  // Plain div, not another .card — this is embedded inside the "إدارة
+  // الامتحان" card built by renderCandidatesTab, and a card-inside-a-card
+  // read as two nested boxes instead of one coherent section.
+  const publishCard = el(`<div><h4>${L("publishExamTitle")}</h4></div>`);
   const publishStatus = el(`<p class="hint" id="publish-status"></p>`);
   publishCard.appendChild(publishStatus);
   function renderPublishStatus() {
@@ -1064,7 +1065,22 @@ function renderExamSettingsTab() {
     publishActions.appendChild(unpublishBtn);
   }
   publishCard.appendChild(publishActions);
-  wrap.appendChild(publishCard);
+  // "امتحان جديد"/"تصفير كل الامتحانات" reset a candidate's examStatus back
+  // to not_started but never touch examOpenAtMs — a shared global setting,
+  // so a per-candidate/bulk reset can't safely reset it too without also
+  // interrupting everyone else's exam window. If the grace period already
+  // ended, a reset candidate would be marked absent again the moment they
+  // reload, with no obvious reason why — this warning is what's supposed
+  // to stop that from being a silent surprise.
+  if (cfg.examOpenAtMs && Date.now() > cfg.examOpenAtMs + EXAM_LATE_GRACE_MS) {
+    publishCard.appendChild(el(`<p class="hint" style="color:var(--bad)">${L("publishExamResetWarning")}</p>`));
+  }
+  return publishCard;
+}
+
+function renderExamSettingsTab() {
+  const cfg = state.examConfig;
+  const wrap = el(`<div></div>`);
 
   // ---- Site-wide font ----
   const fontForm = el(`
@@ -1480,23 +1496,41 @@ function renderCandidatesTab() {
   }
   if (!showRemoved) wrap.appendChild(renderDashboardStats(visible));
 
+  const isAdminRole = state.profile.role === "admin";
+  // Every action that touches ALL candidates' exam state at once — used to
+  // be scattered across a flat toolbar row (create/remove mixed in with
+  // reset/publish/sync) and a separate settings tab for publishing —
+  // grouped into one card now, per explicit request, since it's easy to
+  // mix up which of these overlapping-sounding buttons does what.
+  const showExamMgmt = !showRemoved && (isAdminRole || ADMIN_SERVER_URL);
   const toolbar = el(`
     <div>
       <div class="row-actions">
         <button id="new-cand-btn" class="primary">${L("createCandidate")}</button>
         <button id="toggle-removed-btn" class="ghost">${showRemoved ? L("candidates") : L("removedCandidates")}</button>
-        ${state.profile.role === "admin" ? `<button id="reset-all-exams-btn" class="ghost danger">${L("resetAllExamsBtn")}</button>` : ""}
-        ${state.profile.role === "admin" ? `<button id="new-exam-all-btn" class="ghost">${L("newExamAllBtn")}</button>` : ""}
-        ${ADMIN_SERVER_URL ? `<button id="sync-all-leaderboard-btn" class="ghost">${L("syncLeaderboardAllBtn")}</button>` : ""}
       </div>
       <div class="card" id="candidate-setup-card" style="display:none">
         <div id="new-cand-form"></div>
         <div id="profile-fields-host"></div>
       </div>
+      ${showExamMgmt ? `
+        <div class="card">
+          <h3>${L("examMgmtTitle")}</h3>
+          <div id="publish-exam-host"></div>
+          <div class="row-actions" style="margin-top:12px">
+            ${isAdminRole ? `<button id="new-exam-all-btn" class="ghost">${L("newExamAllBtn")}</button>` : ""}
+            ${isAdminRole ? `<button id="reset-all-exams-btn" class="ghost danger">${L("resetAllExamsBtn")}</button>` : ""}
+            ${ADMIN_SERVER_URL ? `<button id="sync-all-leaderboard-btn" class="ghost">${L("syncLeaderboardAllBtn")}</button>` : ""}
+          </div>
+        </div>
+      ` : ""}
       <div class="cand-card-grid" id="cand-rows"></div>
     </div>
   `);
   wrap.appendChild(toolbar);
+  if (isAdminRole && showExamMgmt) {
+    toolbar.querySelector("#publish-exam-host").appendChild(renderPublishExamCard());
+  }
   // Tied to the act of creating a candidate, not shown as a standing
   // settings panel — the whole card starts hidden (see its style="display:
   // none" above) and only opens when an admin clicks "إنشاء حساب متقدم".
@@ -1961,6 +1995,11 @@ function renderCandidateResultPanel(c) {
         const row = el(`<div class="review-row"></div>`);
         row.appendChild(el(`<div><b>${i + 1}.</b> ${escapeHtml(q.text[state.lang] || q.text.ar)}</div>`));
         if (q.type === "speaking") {
+          // The typed text is optional context, never a substitute for the
+          // recording itself — shown when present, but "no answer" is
+          // judged on the audio alone, since that's the part actually
+          // being graded (see renderSpeakingWidget's own comment).
+          if (ans?.text) row.appendChild(el(`<p class="writing-answer-view">${escapeHtml(ans.text)}</p>`));
           if (ans?.fileId || ans?.audioUrl) {
             const audioEl = el(`<audio controls></audio>`);
             wireSpeakingAudio(audioEl, ans);
@@ -2959,7 +2998,24 @@ function renderQuestionForm(existing) {
     if (TYPE_DEFAULT_SECTION[typeSel.value]) sectionSel.value = TYPE_DEFAULT_SECTION[typeSel.value];
     renderExtra();
   };
-  sectionSel.onchange = renderExtra;
+  sectionSel.onchange = () => {
+    // The reverse of the binding above: switching TYPE to speaking/writing
+    // already forced SECTION to match, but picking السسم = محادثة/كتابة
+    // directly left type sitting on whatever it was before (usually mcq,
+    // the form's default) — so the mcq options fields stayed visible under
+    // a "محادثة" section with nothing meaningful to fill in, since
+    // renderExtra's dispatch below is keyed on type, not section. A
+    // section only ever has one valid type once it's speaking or writing,
+    // so there's nothing lost by forcing it here.
+    if (sectionSel.value === "speaking") typeSel.value = "speaking";
+    else if (sectionSel.value === "writing") typeSel.value = "writing";
+    // Same fix in the other direction: leaving speaking/writing for a
+    // normal section (reading/listening) with type still stuck on
+    // "speaking"/"writing" would keep showing the manual-grading hint
+    // instead of real mcq/truefalse fields for a section that needs them.
+    else if (typeSel.value === "speaking" || typeSel.value === "writing") typeSel.value = "mcq";
+    renderExtra();
+  };
   renderExtra();
 
   wrap.onsubmit = async (e) => {
@@ -3351,34 +3407,49 @@ function renderQuestionAnswerUI(optHost, q) {
   });
 }
 
+// Speaking questions have no options at all — the point of the section is
+// hearing the candidate actually speak Arabic, so a text field alone would
+// defeat it. Per explicit request the widget carries both: a text field
+// (what they'd say, typed out — optional context for the admin) and,
+// underneath it, the voice recorder, which is the part that's actually
+// graded. Both pieces merge into the same examManualAnswers[q.id] object
+// ({ text, fileId }) instead of one overwriting the other.
 function renderSpeakingWidget(q) {
-  const existingAns = examManualAnswers[q.id];
-  const hasExisting = !!(existingAns?.fileId || existingAns?.audioUrl);
+  const existingAns = examManualAnswers[q.id] || {};
+  const hasExisting = !!(existingAns.fileId || existingAns.audioUrl);
   const st = speakingState[q.id] || (hasExisting ? "recorded" : "idle");
   const wrap = el(`<div class="speaking-widget"></div>`);
+
+  const ta = el(`<textarea class="writing-answer" rows="4" placeholder="${L("speakingTextPlaceholder")}">${escapeHtml(existingAns.text || "")}</textarea>`);
+  let saveTimer = null;
+  ta.oninput = () => {
+    examManualAnswers[q.id] = { ...(examManualAnswers[q.id] || {}), text: ta.value };
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveExamProgress, 800);
+  };
+  wrap.appendChild(ta);
+
+  const recorderHost = el(`<div class="speaking-recorder"></div>`);
+  wrap.appendChild(recorderHost);
   if (st === "uploading") {
-    wrap.appendChild(el(`<p class="hint">${L("uploadingAudio")}</p>`));
-    return wrap;
-  }
-  if (st === "recording") {
+    recorderHost.appendChild(el(`<p class="hint">${L("uploadingAudio")}</p>`));
+  } else if (st === "recording") {
     const stopBtn = el(`<button type="button" class="primary">${L("stopRecording")}</button>`);
     stopBtn.onclick = () => stopRecording(q.id);
-    wrap.appendChild(el(`<p class="hint recording-dot">${L("recording")}</p>`));
-    wrap.appendChild(stopBtn);
-    return wrap;
-  }
-  if (st === "recorded" && hasExisting) {
+    recorderHost.appendChild(el(`<p class="hint recording-dot">${L("recording")}</p>`));
+    recorderHost.appendChild(stopBtn);
+  } else if (st === "recorded" && hasExisting) {
     const audioEl = el(`<audio controls></audio>`);
     wireSpeakingAudio(audioEl, existingAns);
-    wrap.appendChild(audioEl);
+    recorderHost.appendChild(audioEl);
     const reBtn = el(`<button type="button" class="ghost">${L("reRecord")}</button>`);
     reBtn.onclick = () => startRecording(q.id);
-    wrap.appendChild(reBtn);
-    return wrap;
+    recorderHost.appendChild(reBtn);
+  } else {
+    const recBtn = el(`<button type="button" class="primary">${L("record")}</button>`);
+    recBtn.onclick = () => startRecording(q.id);
+    recorderHost.appendChild(recBtn);
   }
-  const recBtn = el(`<button type="button" class="primary">${L("record")}</button>`);
-  recBtn.onclick = () => startRecording(q.id);
-  wrap.appendChild(recBtn);
   return wrap;
 }
 
@@ -3395,7 +3466,11 @@ async function startRecording(qid) {
       render();
       try {
         const { fileId } = await uploadViaServer(`/uploads/speaking/${qid}`, blob);
-        examManualAnswers[qid] = { fileId };
+        // Merge, don't overwrite — a typed answer already saved in
+        // examManualAnswers[qid].text used to get silently wiped the
+        // moment a recording finished uploading, since this replaced the
+        // whole object instead of adding fileId onto it.
+        examManualAnswers[qid] = { ...(examManualAnswers[qid] || {}), fileId };
         speakingState[qid] = "recorded";
         saveExamProgress();
       } catch (err) {
@@ -3739,6 +3814,7 @@ function renderResult() {
         const row = el(`<div class="review-row"></div>`);
         row.appendChild(el(`<div><b>${i + 1}.</b> ${escapeHtml(q.text.ar)}</div>`));
         if (q.type === "speaking") {
+          if (ans?.text) row.appendChild(el(`<p class="writing-answer-view">${escapeHtml(ans.text)}</p>`));
           if (ans?.fileId || ans?.audioUrl) {
             const audioEl = el(`<audio controls></audio>`);
             wireSpeakingAudio(audioEl, ans);
