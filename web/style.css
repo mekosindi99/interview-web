@@ -511,7 +511,36 @@ table.grid.leaderboard-table td.leaderboard-name { font-weight: 700; }
   background: #fafbfc; border: 1px solid var(--border); border-radius: 8px;
   padding: 12px; margin-bottom: 12px; font-size: 14px; line-height: 1.7; white-space: pre-wrap;
 }
-.q-audio { width: 100%; margin-bottom: 12px; }
+/* Custom listening-audio player (see buildAudioPlayer in app.js), replacing
+   native <audio controls> — its Android "⋮" overflow menu (Download / Mute /
+   Playback speed) had no place in an exam and couldn't be hidden on its own,
+   so the whole control surface is custom: just a play/pause button and a
+   bar that visibly fills as the clip plays. Sized up from the old native
+   bar (which was compact and easy to miss) so the progress is genuinely
+   visible while listening, not just present. */
+.audio-player {
+  display: flex; align-items: center; gap: 14px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 14px;
+  padding: 16px 18px; margin-bottom: 12px;
+}
+.audio-player-btn {
+  flex-shrink: 0; width: 52px; height: 52px; border-radius: 50%;
+  background: var(--primary); color: #fff; font-size: 20px; line-height: 1;
+  display: flex; align-items: center; justify-content: center; padding: 0;
+  min-height: 0;
+}
+.audio-player-btn:hover { background: var(--primary-dark); }
+.audio-player-btn:disabled { opacity: .5; cursor: default; }
+.audio-player-track {
+  flex: 1; height: 10px; background: var(--border); border-radius: 999px;
+  cursor: pointer; overflow: hidden;
+}
+.audio-player-fill { height: 100%; width: 0%; background: var(--primary); border-radius: 999px; transition: width .1s linear; }
+.audio-player-time { flex-shrink: 0; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+@media (max-width: 480px) {
+  .audio-player { padding: 14px; gap: 10px; }
+  .audio-player-btn { width: 46px; height: 46px; font-size: 18px; }
+}
 
 #section-timer { font-weight: 600; color: var(--primary); }
 

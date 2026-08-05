@@ -65,11 +65,53 @@ async function getSpeakingAudioUrl(ans) {
 function wireSpeakingAudio(audioEl, ans) {
   getSpeakingAudioUrl(ans).then((url) => { if (url) audioEl.src = url; }).catch(() => {});
 }
-// Same authenticated-proxy playback as speaking answers, for a listening
-// question's own prompt clip — keyed directly by fileId rather than an
-// {audioUrl}-shaped answer object.
-function wireQuestionAudio(audioEl, fileId) {
-  getSpeakingAudioUrl({ fileId }).then((url) => { if (url) audioEl.src = url; }).catch(() => {});
+// Custom player for a listening question's prompt clip: a big play/pause
+// button and a progress bar that visibly fills as the clip plays, and
+// nothing else. Built instead of a plain <audio controls> element because
+// native controls on Android Chrome carry a "⋮" overflow menu (Download /
+// Mute / Playback speed) that has no place in an exam — there's no way to
+// hide just that menu while keeping the rest of the native control surface,
+// so this replaces it outright. Same authenticated-proxy fetch as speaking
+// answers (getSpeakingAudioUrl), keyed directly by fileId.
+function buildAudioPlayer(fileId) {
+  const wrap = el(`
+    <div class="audio-player" dir="ltr">
+      <button type="button" class="audio-player-btn" disabled>▶</button>
+      <div class="audio-player-track"><div class="audio-player-fill"></div></div>
+      <span class="audio-player-time">0:00</span>
+    </div>
+  `);
+  const btn = wrap.querySelector(".audio-player-btn");
+  const track = wrap.querySelector(".audio-player-track");
+  const fill = wrap.querySelector(".audio-player-fill");
+  const timeEl = wrap.querySelector(".audio-player-time");
+  const audio = new Audio();
+  audio.preload = "metadata";
+  const fmt = (s) => {
+    if (!isFinite(s) || s < 0) return "0:00";
+    return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+  };
+  audio.addEventListener("loadedmetadata", () => { timeEl.textContent = `0:00 / ${fmt(audio.duration)}`; });
+  audio.addEventListener("timeupdate", () => {
+    fill.style.width = `${audio.duration ? (audio.currentTime / audio.duration) * 100 : 0}%`;
+    timeEl.textContent = `${fmt(audio.currentTime)} / ${fmt(audio.duration)}`;
+  });
+  audio.addEventListener("ended", () => { btn.textContent = "▶"; fill.style.width = "0%"; audio.currentTime = 0; });
+  btn.onclick = () => {
+    if (!audio.src) return;
+    if (audio.paused) { audio.play(); btn.textContent = "⏸"; } else { audio.pause(); btn.textContent = "▶"; }
+  };
+  track.onclick = (e) => {
+    if (!audio.duration) return;
+    const rect = track.getBoundingClientRect();
+    audio.currentTime = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)) * audio.duration;
+  };
+  getSpeakingAudioUrl({ fileId }).then((url) => {
+    if (!url) { btn.textContent = "✕"; return; }
+    audio.src = url;
+    btn.disabled = false;
+  }).catch(() => { btn.textContent = "✕"; });
+  return wrap;
 }
 // Explicit local persistence: keep the session in this browser across tab
 // closes / restarts, so the login screen isn't shown again on the same
@@ -2598,12 +2640,12 @@ function renderQuestionsTab() {
           <div class="q-head"><span class="tag">${L(q.category)}</span> <span class="tag">${L(q.type)}</span> ${q.active === false ? `<span class="tag warn">${L("inactive")}</span>` : ""}</div>
           <div class="q-text">${i + 1}. ${escapeHtml(q.text?.[state.lang] || q.text?.ar || "")}</div>
           ${q.imagePath ? `<img class="q-thumb" src="${q.imagePath}" />` : ""}
-          ${q.audioFileId ? `<audio class="q-audio" id="q-bank-audio-${q.id}" controls></audio>` : ""}
+          <div id="q-bank-audio-host-${q.id}"></div>
           <div class="q-answer">${answerPreview(q)}</div>
           <div id="q-edit-host-${q.id}"></div>
         </div>
       `);
-      if (q.audioFileId) wireQuestionAudio(card.querySelector(`#q-bank-audio-${q.id}`), q.audioFileId);
+      if (q.audioFileId) card.querySelector(`#q-bank-audio-host-${q.id}`).appendChild(buildAudioPlayer(q.audioFileId));
       if (isAdmin) {
         const actions = el(`<div class="row-actions"></div>`);
         const editBtn = el(`<button class="link">${L("edit")}</button>`);
@@ -2656,7 +2698,7 @@ function renderQuestionForm(existing) {
   // Listening audio is uploaded immediately on file select, then referenced
   // by its Drive fileId on submit — keeps the upload out of the form-submit
   // path. fileId, not a URL: playback goes through the authenticated
-  // GET /audio/:fileId proxy (see wireQuestionAudio below), not a direct
+  // GET /audio/:fileId proxy (see buildAudioPlayer below), not a direct
   // Drive link — that link intermittently serves an HTML interstitial
   // instead of the actual audio bytes, which is what made listening
   // playback show 0:00/0:00 and never start.
@@ -2815,17 +2857,13 @@ function renderQuestionForm(existing) {
         try {
           const { fileId } = await uploadViaServer("/uploads/listening", file);
           pendingAudioFileId = fileId;
-          status.textContent = L("materialUploaded");
+          renderExtra(); // refreshes this block so the preview below appears right away
         } catch (err) {
           status.textContent = err.message;
         }
       };
       extra.appendChild(audioWrap);
-      if (pendingAudioFileId) {
-        const preview = el(`<audio class="q-audio" controls></audio>`);
-        wireQuestionAudio(preview, pendingAudioFileId);
-        extra.appendChild(preview);
-      }
+      if (pendingAudioFileId) extra.appendChild(buildAudioPlayer(pendingAudioFileId));
       extra.appendChild(status);
     }
   }
@@ -3105,7 +3143,7 @@ function renderExam() {
       </div>
       <div class="card q-card-big">
         ${q.passage?.[qLang(q)] || q.passage?.ar ? `<div class="passage">${escapeHtml(q.passage[qLang(q)] || q.passage.ar)}</div>` : ""}
-        ${q.audioFileId ? `<audio class="q-audio" id="q-audio-${q.id}" controls></audio>` : ""}
+        <div id="q-audio-host"></div>
         <!-- Skipped for an audio question: q.text there is only an internal
              placeholder for the admin's own bank list (see renderQuestionForm),
              not real question text — showing it would also let a candidate
@@ -3124,7 +3162,7 @@ function renderExam() {
       </div>
     </div>
   `);
-  if (q.audioFileId) wireQuestionAudio(wrap.querySelector(`#q-audio-${q.id}`), q.audioFileId);
+  if (q.audioFileId) wrap.querySelector("#q-audio-host").appendChild(buildAudioPlayer(q.audioFileId));
 
   renderQuestionAnswerUI(wrap.querySelector("#q-options"), q);
 
