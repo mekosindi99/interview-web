@@ -349,9 +349,40 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .brand { font-weight: 700; }
 .who { color: var(--muted); font-size: 13px; flex: 1; text-align: center; }
 
-.tabs { display: flex; gap: 8px; flex-wrap: wrap; }
-.tabs button { background: var(--card); border: 1px solid var(--border); }
-.tabs button.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+/* Admin section nav: a sidebar on wide screens (the flat wrapping row of
+   pill buttons it replaced got messy once enough tabs existed to wrap onto
+   a second, uneven line) so every section is a fixed, always-visible target
+   instead of a line that reflows depending on which tabs happen to be
+   visible for the signed-in role. Collapses to the original horizontal
+   scrollable row on narrow screens, where a fixed side column would eat too
+   much width from the actual content. */
+.admin-shell { display: flex; gap: 16px; align-items: flex-start; }
+.admin-sidebar {
+  display: flex; flex-direction: column; gap: 4px;
+  width: 220px; flex-shrink: 0;
+  background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+  padding: 10px; position: sticky; top: 12px;
+}
+.admin-sidebar-btn {
+  display: flex; align-items: center; gap: 10px;
+  background: transparent; border: none; border-radius: 8px;
+  padding: 10px 12px; font-size: 14px; font-weight: 600; color: var(--text);
+  text-align: start; justify-content: flex-start; min-height: 0;
+}
+.admin-sidebar-btn:hover { background: var(--bg); }
+.admin-sidebar-btn.active { background: var(--primary); color: #fff; }
+.admin-sidebar-icon { font-size: 17px; flex-shrink: 0; line-height: 1; }
+.admin-sidebar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.admin-main { flex: 1; min-width: 0; }
+@media (max-width: 780px) {
+  .admin-shell { flex-direction: column; }
+  .admin-sidebar {
+    width: 100%; flex-direction: row; overflow-x: auto; position: static;
+    -webkit-overflow-scrolling: touch;
+  }
+  .admin-sidebar-btn { flex-shrink: 0; }
+  .admin-sidebar-label { white-space: nowrap; }
+}
 
 .table-scroll { overflow-x: auto; border-radius: 12px; margin-bottom: 16px; -webkit-overflow-scrolling: touch; }
 .table-scroll table.grid { margin-bottom: 0; }

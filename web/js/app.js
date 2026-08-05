@@ -864,21 +864,34 @@ function renderLogin() {
 // ============================================================
 // ADMIN / CO-ADMIN
 // ============================================================
+// Tab icon + label pairs, in nav order — kept as one list instead of
+// duplicated across the markup and the tab-body dispatch below, so adding a
+// tab means editing one place.
+const ADMIN_TABS = [
+  { id: "candidates", icon: "👥", labelKey: "candidates", adminOnly: false },
+  { id: "questions", icon: "📚", labelKey: "questionsBank", adminOnly: false },
+  { id: "material", icon: "📖", labelKey: "materialTab", adminOnly: false },
+  { id: "settings", icon: "⚙️", labelKey: "examSettings", adminOnly: true },
+  { id: "admission", icon: "🎓", labelKey: "admissionTab", adminOnly: true },
+  { id: "coadmins", icon: "🧑‍💼", labelKey: "coadmins", adminOnly: true },
+  { id: "about", icon: "ℹ️", labelKey: "aboutTab", adminOnly: true },
+];
+
 function renderAdminShell() {
   const isAdmin = state.profile.role === "admin";
   const tab = state.adminTab || "candidates";
+  const visibleTabs = ADMIN_TABS.filter((t) => isAdmin || !t.adminOnly);
   const wrap = el(`
-    <div class="shell">
-      <nav class="tabs">
-        <button data-tab="candidates" class="${tab === "candidates" ? "active" : ""}">${L("candidates")}</button>
-        <button data-tab="questions" class="${tab === "questions" ? "active" : ""}">${L("questionsBank")}</button>
-        <button data-tab="material" class="${tab === "material" ? "active" : ""}">${L("materialTab")}</button>
-        ${isAdmin ? `<button data-tab="settings" class="${tab === "settings" ? "active" : ""}">${L("examSettings")}</button>` : ""}
-        ${isAdmin ? `<button data-tab="admission" class="${tab === "admission" ? "active" : ""}">${L("admissionTab")}</button>` : ""}
-        ${isAdmin ? `<button data-tab="coadmins" class="${tab === "coadmins" ? "active" : ""}">${L("coadmins")}</button>` : ""}
-        ${isAdmin ? `<button data-tab="about" class="${tab === "about" ? "active" : ""}">${L("aboutTab")}</button>` : ""}
+    <div class="admin-shell">
+      <nav class="admin-sidebar">
+        ${visibleTabs.map((t) => `
+          <button data-tab="${t.id}" class="admin-sidebar-btn ${tab === t.id ? "active" : ""}">
+            <span class="admin-sidebar-icon">${t.icon}</span>
+            <span class="admin-sidebar-label">${L(t.labelKey)}</span>
+          </button>
+        `).join("")}
       </nav>
-      <main id="tab-body"></main>
+      <main class="admin-main" id="tab-body"></main>
     </div>
   `);
   wrap.querySelectorAll("[data-tab]").forEach((b) => {
