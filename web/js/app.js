@@ -1047,15 +1047,21 @@ function renderPublishExamCard() {
   const publishActions = el(`<div class="row-actions"></div>`);
   const publishBtn = el(`<button type="button" class="primary">${L("publishExamBtn", { n: graceMin })}</button>`);
   publishBtn.onclick = async () => {
-    if (!confirm(L("publishExamConfirm", { n: graceMin }))) return;
-    // Publishing is "start a fresh exam round for everyone" — it wasn't
-    // resetting anyone's old data, so a previously graded candidate just
-    // kept showing their old finished result with no way back into the
-    // exam, and admins had to remember to separately click "امتحان جديد"
-    // (or "تصفير كل الامتحانات") every single time before publishing for
-    // this to actually mean anything. Folded that reset in here instead —
-    // it's the same per-candidate archive-then-reset performExamReset
-    // already uses, just run first, before the new window opens.
+    // Per explicit request, this one button now replaces what used to be
+    // three separate ones (نشر الامتحان / امتحان جديد / تصفير كل
+    // الامتحانات) — and does the most destructive of the three every
+    // single time it's clicked: every candidate's exam history is wiped
+    // PERMANENTLY (not archived — genuinely deleted, no pastAttempts
+    // record left to restore), before the new window opens. That's a real
+    // change from how this used to work (a candidate's old results used
+    // to survive in the archive), confirmed as the wanted behavior, but
+    // still significant enough to keep behind the same typed-confirmation
+    // word the old تصفير كل الامتحانات button required, rather than a
+    // plain OK/Cancel dialog someone could click through on reflex.
+    const CONFIRM_WORD = "نشر";
+    const typed = prompt(L("publishExamPrompt", { word: CONFIRM_WORD, n: graceMin }));
+    if (typed === null) return;
+    if (typed.trim() !== CONFIRM_WORD) { alert(L("publishExamCancelled")); return; }
     const candidates = state.candidates.filter((c) => !c.deleted);
     const originalText = publishBtn.textContent;
     publishBtn.disabled = true;
@@ -1063,9 +1069,24 @@ function renderPublishExamCard() {
     for (const c of candidates) {
       publishBtn.textContent = L("publishExamResetProgress", { done, total: candidates.length });
       try {
-        await performExamReset(c);
+        const pastSnap = await getDocs(collection(db, "users", c.id, "pastAttempts"));
+        await Promise.all(pastSnap.docs.map((d) => deleteDoc(d.ref)));
+        await deleteDoc(doc(db, "attempts", c.id)).catch(() => {});
+        await updateDoc(doc(db, "users", c.id), {
+          examStatus: "not_started",
+          examProgress: deleteField(), examManualProgress: deleteField(),
+          examSectionIndex: deleteField(), examQIndex: deleteField(),
+          examSectionDeadline: deleteField(), examStartedAtMs: deleteField(),
+          examSelectedQuestionIds: deleteField(),
+        }).catch(() => {});
+        if (ADMIN_SERVER_URL) {
+          const token = await state.user.getIdToken();
+          await fetch(`${ADMIN_SERVER_URL}/leaderboard/${c.id}`, {
+            method: "DELETE", headers: { Authorization: `Bearer ${token}` },
+          }).catch(() => {});
+        }
       } catch (err) {
-        console.warn(`reset failed for candidate ${c.id} during publish`, err);
+        console.warn(`full reset failed for candidate ${c.id} during publish`, err);
       }
       done++;
     }
@@ -1088,16 +1109,6 @@ function renderPublishExamCard() {
     publishActions.appendChild(unpublishBtn);
   }
   publishCard.appendChild(publishActions);
-  // "امتحان جديد"/"تصفير كل الامتحانات" reset a candidate's examStatus back
-  // to not_started but never touch examOpenAtMs — a shared global setting,
-  // so a per-candidate/bulk reset can't safely reset it too without also
-  // interrupting everyone else's exam window. If the grace period already
-  // ended, a reset candidate would be marked absent again the moment they
-  // reload, with no obvious reason why — this warning is what's supposed
-  // to stop that from being a silent surprise.
-  if (cfg.examOpenAtMs && Date.now() > cfg.examOpenAtMs + EXAM_LATE_GRACE_MS) {
-    publishCard.appendChild(el(`<p class="hint" style="color:var(--bad)">${L("publishExamResetWarning")}</p>`));
-  }
   return publishCard;
 }
 
@@ -1541,8 +1552,6 @@ function renderCandidatesTab() {
           <h3>${L("examMgmtTitle")}</h3>
           <div id="publish-exam-host"></div>
           <div class="row-actions" style="margin-top:12px">
-            ${isAdminRole ? `<button id="new-exam-all-btn" class="ghost">${L("newExamAllBtn")}</button>` : ""}
-            ${isAdminRole ? `<button id="reset-all-exams-btn" class="ghost danger">${L("resetAllExamsBtn")}</button>` : ""}
             ${ADMIN_SERVER_URL ? `<button id="sync-all-leaderboard-btn" class="ghost">${L("syncLeaderboardAllBtn")}</button>` : ""}
             <button id="export-excel-btn" class="ghost">${L("exportExcelBtn")}</button>
           </div>
@@ -1577,10 +1586,6 @@ function renderCandidatesTab() {
   };
   toolbar.querySelector("#new-cand-btn").onclick = openCandidateSetup;
   toolbar.querySelector("#toggle-removed-btn").onclick = () => setState({ showRemovedCandidates: !showRemoved });
-  const resetAllBtn = toolbar.querySelector("#reset-all-exams-btn");
-  if (resetAllBtn) resetAllBtn.onclick = resetAllExamsBulk;
-  const newExamAllBtn = toolbar.querySelector("#new-exam-all-btn");
-  if (newExamAllBtn) newExamAllBtn.onclick = () => newExamAllBulk(newExamAllBtn);
   const syncAllBtn = toolbar.querySelector("#sync-all-leaderboard-btn");
   if (syncAllBtn) syncAllBtn.onclick = () => syncAllLeaderboard(syncAllBtn);
   const exportBtn = toolbar.querySelector("#export-excel-btn");
@@ -1746,35 +1751,6 @@ function renderCandidateProfilePanel(c) {
   return wrap;
 }
 
-// Wipes exam data for EVERY candidate — current attempt, all archived
-// history, and progress fields — everywhere at once. Destructive and
-// irreversible, gated behind typing an exact confirmation word (not just a
-// yes/no dialog) since this can't be undone.
-async function resetAllExamsBulk() {
-  const CONFIRM_WORD = "تصفير";
-  const typed = prompt(L("resetAllExamsPrompt", { word: CONFIRM_WORD }));
-  if (typed === null) return;
-  if (typed.trim() !== CONFIRM_WORD) { alert(L("resetAllExamsCancelled")); return; }
-  const candidates = state.candidates.filter((c) => !c.deleted);
-  for (const c of candidates) {
-    try {
-      const pastSnap = await getDocs(collection(db, "users", c.id, "pastAttempts"));
-      await Promise.all(pastSnap.docs.map((d) => deleteDoc(d.ref)));
-      await deleteDoc(doc(db, "attempts", c.id)).catch(() => {});
-      await updateDoc(doc(db, "users", c.id), {
-        examStatus: "not_started",
-        examProgress: deleteField(), examManualProgress: deleteField(),
-        examSectionIndex: deleteField(), examQIndex: deleteField(),
-        examSectionDeadline: deleteField(), examStartedAtMs: deleteField(),
-        examSelectedQuestionIds: deleteField(),
-      }).catch(() => {});
-    } catch (err) {
-      console.warn(`reset failed for candidate ${c.id}`, err);
-    }
-  }
-  alert(L("resetAllExamsDone"));
-}
-
 // Bulk version of the old per-candidate "نشر بلوحة النتائج" chip — one
 // click syncs every submitted/graded candidate to the public leaderboard
 // instead of doing it one card at a time. Same server endpoint
@@ -1838,76 +1814,6 @@ async function syncAllLeaderboard(btn) {
   }
 }
 
-// Archives the candidate's current attempt (if any) into pastAttempts, then
-// resets their profile so they can take the exam again from scratch — old
-// results survive as history instead of being silently overwritten.
-async function performExamReset(c) {
-  const attemptSnap = await getDoc(doc(db, "attempts", c.id));
-  if (attemptSnap.exists()) {
-    await addDoc(collection(db, "users", c.id, "pastAttempts"), {
-      ...attemptSnap.data(), archivedAt: serverTimestamp(),
-    });
-    await deleteDoc(doc(db, "attempts", c.id));
-  }
-  await updateDoc(doc(db, "users", c.id), {
-    examStatus: "not_started",
-    examProgress: deleteField(), examManualProgress: deleteField(),
-    examSectionIndex: deleteField(), examQIndex: deleteField(),
-    examSectionDeadline: deleteField(), examStartedAtMs: deleteField(),
-    examSelectedQuestionIds: deleteField(),
-  });
-  // The old exam's score otherwise stays visible on the public board
-  // forever: /leaderboard/sync/:uid republishes by reading attempts/{uid},
-  // which this function just deleted, so calling it after a reset just
-  // 404s instead of clearing the stale entry — a dedicated delete is the
-  // only thing that can take it down. Best-effort: the reset itself already
-  // succeeded above regardless of whether this does.
-  if (ADMIN_SERVER_URL) {
-    try {
-      const token = await state.user.getIdToken();
-      await fetch(`${ADMIN_SERVER_URL}/leaderboard/${c.id}`, {
-        method: "DELETE", headers: { Authorization: `Bearer ${token}` },
-      });
-    } catch (err) {
-      console.warn("leaderboard entry cleanup failed", err);
-    }
-  }
-}
-async function resetCandidateExam(c) {
-  if (!confirm(L("newExamConfirm", { name: c.name }))) return;
-  try {
-    await performExamReset(c);
-  } catch (err) {
-    alert(`${L("error")}: ${err.message}`);
-  }
-}
-
-// Bulk version of the per-candidate "امتحان جديد" chip — one button for
-// every candidate who's touched the exam at all (not "not_started"),
-// instead of clicking it per card. Same archive-then-reset per candidate
-// (performExamReset), so past results still survive in pastAttempts same
-// as the single version — just looped.
-async function newExamAllBulk(btn) {
-  const candidates = state.candidates.filter((c) => !c.deleted && c.examStatus && c.examStatus !== "not_started");
-  if (!candidates.length) { alert(L("newExamAllNone")); return; }
-  if (!confirm(L("newExamAllConfirm", { n: candidates.length }))) return;
-  btn.disabled = true;
-  const originalText = btn.textContent;
-  let done = 0, failed = 0;
-  for (const c of candidates) {
-    btn.textContent = L("newExamAllProgress", { done, total: candidates.length });
-    try {
-      await performExamReset(c);
-      done++;
-    } catch (err) {
-      console.warn(`new-exam reset failed for candidate ${c.id}`, err);
-      failed++;
-    }
-  }
-  btn.textContent = originalText;
-  btn.disabled = false;
-  alert(L("newExamAllDone", { done, total: candidates.length, failed }));
-}
 
 function renderCandidateHistoryPanel(c) {
   const wrap = el(`<div class="card"><h3>${escapeHtml(c.name)} — ${L("examHistory")}</h3><div id="history-body">${L("loading")}</div></div>`);
