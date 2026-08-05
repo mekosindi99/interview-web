@@ -1824,7 +1824,7 @@ function renderCandidateResultPanel(c) {
           row.appendChild(el(`<p class="writing-answer-view">${escapeHtml(ans?.text || "")}</p>`));
           if (!ans?.text) row.appendChild(el(`<p class="hint">${L("noAnswerGiven")}</p>`));
         }
-        const scoreInput = el(`<label>${L("scoreOutOf", { max: q.points ?? POINTS_PER_QUESTION })}<input type="number" min="0" max="${q.points ?? POINTS_PER_QUESTION}" name="score_${q.id}" value="${manualScores[q.id] ?? 0}" /></label>`);
+        const scoreInput = el(`<label>${L("scoreOutOf", { max: q.points ?? POINTS_PER_QUESTION })}<input type="number" min="0" max="${q.points ?? POINTS_PER_QUESTION}" step="1" name="score_${q.id}" value="${manualScores[q.id] ?? 0}" /></label>`);
         row.appendChild(scoreInput);
         gradingForm.appendChild(row);
       });
@@ -1838,7 +1838,12 @@ function renderCandidateResultPanel(c) {
         const newManualScores = {};
         let manualScore = 0;
         manualQs.forEach((q) => {
-          const v = Math.max(0, Math.min(q.points ?? POINTS_PER_QUESTION, Number(f.get(`score_${q.id}`)) || 0));
+          // Rounded, not just clamped: the input's own step="1" stops the
+          // up/down arrows from producing a fraction, but a value typed by
+          // hand (e.g. "1.5") isn't blocked by that alone — this is what
+          // actually enforces "0, 1, or 2, nothing in between" server-side
+          // regardless of how the number got into the field.
+          const v = Math.max(0, Math.min(q.points ?? POINTS_PER_QUESTION, Math.round(Number(f.get(`score_${q.id}`)) || 0)));
           newManualScores[q.id] = v;
           manualScore += v;
         });
@@ -2966,9 +2971,13 @@ let recordedChunks = [];
 
 // A question can force a specific display language for candidates
 // (q.displayLang), overriding whatever language they picked from the flag
-// switcher — used e.g. to keep a listening/reading question in one language
-// regardless of UI language. Falls back to the candidate's own language.
-function qLang(q) { return q.displayLang || state.lang; }
+// switcher — used e.g. to keep a listening/reading/speaking question in one
+// language regardless of UI language. Falls back to Arabic, not the
+// candidate's own language: every section should default to Arabic unless
+// the admin explicitly marks a specific question Kurdish, so a candidate
+// who happens to have the Kurdish flag selected doesn't see, say, a
+// speaking prompt in Kurdish just because that's their UI language.
+function qLang(q) { return q.displayLang || "ar"; }
 
 function groupBySections(activeQs) {
   const order = state.examConfig.sectionOrder;
