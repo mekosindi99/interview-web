@@ -26,7 +26,20 @@ service cloud.firestore {
         && request.resource.data.deleted == resource.data.deleted
         && !("score" in request.resource.data.diff(resource.data).affectedKeys());
       allow update, delete: if isAdmin();
-      allow update: if isSignedIn() && role() == 'coadmin' && resource.data.role == 'candidate';
+      // Unlike every other update rule here, this one carried NO constraint
+      // on the new data — only on the target doc's role beforehand. A
+      // coadmin (who can already create candidates, and therefore knows
+      // their own throwaway candidate's uid) could updateDoc({role:'admin'})
+      // straight from the client and self-promote to full admin, since
+      // Firestore rules are OR'd and this branch alone was enough to permit
+      // it. Now mirrors the candidate self-update rule just above: role
+      // can't change and score (which lives only on attempts/{uid} per the
+      // comment there) can't be touched, while blocked/deleted/exam-progress
+      // fields stay writable since a coadmin legitimately sets those
+      // (block/unblock, soft delete, exam reset) via direct client writes.
+      allow update: if isSignedIn() && role() == 'coadmin' && resource.data.role == 'candidate'
+        && request.resource.data.role == resource.data.role
+        && !("score" in request.resource.data.diff(resource.data).affectedKeys());
       allow create: if isStaff(); // admin/coadmin create candidate & coadmin accounts (via secondary auth app)
       // One-time bootstrap: a brand-new signed-in user may create their OWN
       // profile as 'admin' only while meta/adminBootstrap doesn't exist yet.

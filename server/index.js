@@ -599,14 +599,29 @@ app.get("/audio/:fileId", requireSignedIn, async (req, res) => {
   }
 });
 
-// Streams a candidate's private CV — signed-in only (staff reviewing it, or
-// the candidate re-opening the profile form to see what they already
-// uploaded). Same private-on-Drive pattern as speaking recordings.
+// Streams a candidate's private CV — staff reviewing it, or the candidate
+// re-opening the profile form to see what they already uploaded — and
+// nobody else. requireSignedIn alone only proves the caller has SOME
+// account; it doesn't prove this is THEIR cv. cvFileId lives in exactly one
+// place, users/{uid}.profileExtra.cvFileId, so ownership is a single
+// equality query: without it, any signed-in candidate who obtained another
+// candidate's fileId (Drive's own file id, not derived from anything a
+// client is expected to guess, but still not a real access control) could
+// read their private CV straight from this route.
 app.get("/cv/:fileId", requireSignedIn, async (req, res) => {
   try {
-    const meta = await drive.files.get({ fileId: req.params.fileId, fields: "size,mimeType" });
+    const { fileId } = req.params;
+    const callerSnap = await db.collection("users").doc(req.uid).get();
+    const isStaff = callerSnap.exists && ["admin", "coadmin"].includes(callerSnap.data().role);
+    if (!isStaff) {
+      const ownerQuery = await db.collection("users")
+        .where("profileExtra.cvFileId", "==", fileId).limit(1).get();
+      const isOwner = !ownerQuery.empty && ownerQuery.docs[0].id === req.uid;
+      if (!isOwner) return res.status(403).json({ error: "forbidden" });
+    }
+    const meta = await drive.files.get({ fileId, fields: "size,mimeType" });
     const driveRes = await drive.files.get(
-      { fileId: req.params.fileId, alt: "media" },
+      { fileId, alt: "media" },
       { responseType: "stream" }
     );
     res.setHeader("Content-Type", meta.data.mimeType || "application/pdf");
