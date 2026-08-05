@@ -19,6 +19,7 @@ export const t = {
     logout: "خروج",
     toggleTheme: "الوضع الداكن",
     menuLabel: "القائمة",
+    sectionsLabel: "الأقسام",
     back: "رجوع",
     total: "المجموع",
     leaderboardBtn: "نتائج الجميع",

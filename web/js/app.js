@@ -720,33 +720,88 @@ function renderMain() {
   root.appendChild(renderAdminShell());
 }
 
-// Kurdish support (and its language-switcher flag row) was removed
-// site-wide — Arabic is the only language now, so a "switcher" with
-// exactly one always-active option had nothing left to switch between.
-function langSwitcher() {
-  const wrap = el(`<div class="lang-row"></div>`);
-  if (state.user) {
-    const logoutBtn = el(`<button type="button" class="ghost logout-flag-btn">${L("logout")}</button>`);
+// Shared hamburger + slide-out drawer chrome — one visual language for the
+// whole app instead of admin/coadmin getting a polished drawer while
+// candidates were still stuck with a plain inline row of two icon buttons,
+// per explicit request to make them match. drawerBodyHtml is whatever goes
+// below the branding header (nav sections for staff, just theme+logout for
+// a candidate); wireDrawerBody hooks up whatever's inside it and receives
+// closeMenu to call after any action that should also close the drawer.
+function buildDrawerMenu(menuOpenKey, drawerBodyHtml, wireDrawerBody) {
+  const open = !!state[menuOpenKey];
+  const wrap = el(`
+    <div>
+      <div class="admin-topbar">
+        <button type="button" class="admin-hamburger-btn" aria-label="${L("menuLabel")}">☰</button>
+      </div>
+      <div class="admin-drawer-backdrop" ${open ? "" : "hidden"}></div>
+      <nav class="admin-drawer ${open ? "open" : ""}">
+        <div class="admin-drawer-header">
+          <img class="admin-drawer-logo" src="assets/brand/logo.svg" alt="" />
+          <span class="admin-drawer-appname">${L("appName")}</span>
+        </div>
+        ${drawerBodyHtml}
+      </nav>
+    </div>
+  `);
+  const closeMenu = () => setState({ [menuOpenKey]: false });
+  wrap.querySelector(".admin-hamburger-btn").onclick = () => setState({ [menuOpenKey]: !open });
+  wrap.querySelector(".admin-drawer-backdrop").onclick = closeMenu;
+  if (wireDrawerBody) wireDrawerBody(wrap, closeMenu, menuOpenKey);
+  return wrap;
+}
+
+// Theme-toggle + logout markup/wiring, identical on both the candidate
+// drawer and the staff one — written once so the two can't drift apart.
+function accountDrawerItemsHtml() {
+  return `
+    <button type="button" class="admin-sidebar-btn" id="drawer-theme">
+      <span class="admin-sidebar-icon">${state.theme === "dark" ? "☀️" : "🌙"}</span>
+      <span class="admin-sidebar-label">${L("toggleTheme")}</span>
+    </button>
+    <button type="button" class="admin-sidebar-btn danger" id="drawer-logout">
+      <span class="admin-sidebar-icon">🚪</span>
+      <span class="admin-sidebar-label">${L("logout")}</span>
+    </button>
+  `;
+}
+function wireAccountDrawerItems(wrap, closeMenu, menuOpenKey) {
+  wrap.querySelector("#drawer-theme").onclick = () => {
+    const next = state.theme === "dark" ? "light" : "dark";
+    localStorage.setItem("theme", next);
+    setState({ theme: next, [menuOpenKey]: false });
+  };
+  wrap.querySelector("#drawer-logout").onclick = () => {
     // markOffline:true writes online:false to Firestore BEFORE signing out
     // (a signed-out user can no longer write their own doc at all) — this
     // is the real, immediate sync: since the admin's candidate list is a
     // live onSnapshot, that write flips their dot the moment logout
     // happens instead of waiting for the heartbeat to just go stale.
-    logoutBtn.onclick = () => stopPresenceHeartbeat(true).finally(() => signOut(auth));
-    wrap.appendChild(logoutBtn);
-  }
-  const themeBtn = el(`
-    <button type="button" class="theme-toggle-btn" aria-label="${L("toggleTheme")}" title="${L("toggleTheme")}">
-      ${state.theme === "dark" ? "☀️" : "🌙"}
-    </button>
-  `);
-  themeBtn.onclick = () => {
-    const next = state.theme === "dark" ? "light" : "dark";
-    localStorage.setItem("theme", next);
-    setState({ theme: next });
+    stopPresenceHeartbeat(true).finally(() => signOut(auth));
   };
-  wrap.appendChild(themeBtn);
-  return wrap;
+}
+
+// Candidate-facing bar — before login this is just a theme toggle (no
+// drawer: nothing else to put in one yet), after login it's the same
+// hamburger+drawer chrome the admin/coadmin views use, holding just theme
+// + logout (candidates have no section nav to add to it).
+function langSwitcher() {
+  if (!state.user) {
+    const wrap = el(`<div class="lang-row"></div>`);
+    const themeBtn = el(`
+      <button type="button" class="theme-toggle-btn" aria-label="${L("toggleTheme")}" title="${L("toggleTheme")}">
+        ${state.theme === "dark" ? "☀️" : "🌙"}
+      </button>
+    `);
+    themeBtn.onclick = () => {
+      const next = state.theme === "dark" ? "light" : "dark";
+      localStorage.setItem("theme", next);
+      setState({ theme: next });
+    };
+    wrap.appendChild(themeBtn);
+    return wrap;
+  }
+  return buildDrawerMenu("candidateMenuOpen", accountDrawerItemsHtml(), wireAccountDrawerItems);
 }
 
 // ---------- Admin bootstrap ----------
@@ -878,7 +933,7 @@ const ADMIN_TABS = [
   { id: "material", icon: "📖", labelKey: "materialTab", adminOnly: false },
   { id: "settings", icon: "⚙️", labelKey: "examSettings", adminOnly: true },
   { id: "admission", icon: "🎓", labelKey: "admissionTab", adminOnly: true },
-  { id: "coadmins", icon: "🧑‍💼", labelKey: "coadmins", adminOnly: true },
+  { id: "coadmins", icon: "🛡️", labelKey: "coadmins", adminOnly: true },
   { id: "about", icon: "ℹ️", labelKey: "aboutTab", adminOnly: true },
 ];
 
@@ -886,56 +941,30 @@ function renderAdminShell() {
   const isAdmin = state.profile.role === "admin";
   const tab = state.adminTab || "candidates";
   const visibleTabs = ADMIN_TABS.filter((t) => isAdmin || !t.adminOnly);
-  const menuOpen = !!state.adminMenuOpen;
-  // Hamburger-triggered slide-out drawer (per explicit request, replacing
-  // both the standing top bar and the always-visible sidebar) — nav
-  // sections, the theme toggle, and logout all live in the one drawer, open
-  // and closed by the same ☰ button. A backdrop click or picking a section
-  // both close it, same as any standard drawer menu.
-  const wrap = el(`
-    <div class="admin-shell">
-      <div class="admin-topbar">
-        <button type="button" class="admin-hamburger-btn" aria-label="${L("menuLabel")}">☰</button>
-      </div>
-      <div class="admin-drawer-backdrop" ${menuOpen ? "" : "hidden"}></div>
-      <nav class="admin-drawer ${menuOpen ? "open" : ""}">
-        ${visibleTabs.map((t) => `
-          <button data-tab="${t.id}" class="admin-sidebar-btn ${tab === t.id ? "active" : ""}">
-            <span class="admin-sidebar-icon">${t.icon}</span>
-            <span class="admin-sidebar-label">${L(t.labelKey)}</span>
-          </button>
-        `).join("")}
-        <div class="admin-drawer-divider"></div>
-        <button type="button" class="admin-sidebar-btn" id="admin-drawer-theme">
-          <span class="admin-sidebar-icon">${state.theme === "dark" ? "☀️" : "🌙"}</span>
-          <span class="admin-sidebar-label">${L("toggleTheme")}</span>
-        </button>
-        <button type="button" class="admin-sidebar-btn danger" id="admin-drawer-logout">
-          <span class="admin-sidebar-icon">🚪</span>
-          <span class="admin-sidebar-label">${L("logout")}</span>
-        </button>
-      </nav>
-      <main class="admin-main" id="tab-body"></main>
-    </div>
-  `);
-  const closeMenu = () => setState({ adminMenuOpen: false });
-  wrap.querySelector(".admin-hamburger-btn").onclick = () => setState({ adminMenuOpen: !menuOpen });
-  wrap.querySelector(".admin-drawer-backdrop").onclick = closeMenu;
-  wrap.querySelectorAll("[data-tab]").forEach((b) => {
-    b.onclick = () => setState({ adminTab: b.dataset.tab, adminMenuOpen: false });
+  // Same buildDrawerMenu chrome the candidate-facing bar uses (per explicit
+  // request that the two match) — section nav on top, then the same
+  // theme+logout pair every drawer ends with.
+  const drawerBody = `
+    <div class="admin-drawer-section-label">${L("sectionsLabel")}</div>
+    ${visibleTabs.map((t) => `
+      <button data-tab="${t.id}" class="admin-sidebar-btn ${tab === t.id ? "active" : ""}">
+        <span class="admin-sidebar-icon">${t.icon}</span>
+        <span class="admin-sidebar-label">${L(t.labelKey)}</span>
+      </button>
+    `).join("")}
+    <div class="admin-drawer-divider"></div>
+    ${accountDrawerItemsHtml()}
+  `;
+  const menuHost = buildDrawerMenu("adminMenuOpen", drawerBody, (drawerWrap, closeMenu, menuOpenKey) => {
+    drawerWrap.querySelectorAll("[data-tab]").forEach((b) => {
+      b.onclick = () => setState({ adminTab: b.dataset.tab, [menuOpenKey]: false });
+    });
+    wireAccountDrawerItems(drawerWrap, closeMenu, menuOpenKey);
   });
-  wrap.querySelector("#admin-drawer-theme").onclick = () => {
-    const next = state.theme === "dark" ? "light" : "dark";
-    localStorage.setItem("theme", next);
-    setState({ theme: next, adminMenuOpen: false });
-  };
-  // Same real, immediate presence sync as the candidate-facing logout
-  // button (see langSwitcher) — writes online:false before signOut() runs,
-  // since a signed-out user can no longer write to their own doc at all.
-  wrap.querySelector("#admin-drawer-logout").onclick = () => {
-    stopPresenceHeartbeat(true).finally(() => signOut(auth));
-  };
-  const body = wrap.querySelector("#tab-body");
+  const wrap = el(`<div class="admin-shell"></div>`);
+  wrap.appendChild(menuHost);
+  const body = el(`<main class="admin-main" id="tab-body"></main>`);
+  wrap.appendChild(body);
   if (tab === "candidates") body.appendChild(renderCandidatesTab());
   else if (tab === "questions") body.appendChild(renderQuestionsTab());
   else if (tab === "material") body.appendChild(renderMaterialAdminTab());
