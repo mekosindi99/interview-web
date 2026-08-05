@@ -1544,6 +1544,7 @@ function renderCandidatesTab() {
             ${isAdminRole ? `<button id="new-exam-all-btn" class="ghost">${L("newExamAllBtn")}</button>` : ""}
             ${isAdminRole ? `<button id="reset-all-exams-btn" class="ghost danger">${L("resetAllExamsBtn")}</button>` : ""}
             ${ADMIN_SERVER_URL ? `<button id="sync-all-leaderboard-btn" class="ghost">${L("syncLeaderboardAllBtn")}</button>` : ""}
+            <button id="export-excel-btn" class="ghost">${L("exportExcelBtn")}</button>
           </div>
         </div>
       ` : ""}
@@ -1582,6 +1583,8 @@ function renderCandidatesTab() {
   if (newExamAllBtn) newExamAllBtn.onclick = () => newExamAllBulk(newExamAllBtn);
   const syncAllBtn = toolbar.querySelector("#sync-all-leaderboard-btn");
   if (syncAllBtn) syncAllBtn.onclick = () => syncAllLeaderboard(syncAllBtn);
+  const exportBtn = toolbar.querySelector("#export-excel-btn");
+  if (exportBtn) exportBtn.onclick = () => exportResultsExcel(exportBtn);
   const rows = toolbar.querySelector("#cand-rows");
   visible.forEach((c) => {
     const att = state.attempts[c.id];
@@ -3640,6 +3643,70 @@ async function submitExam(activeQs) {
 // spoofed by a candidate's own client. Embedded directly on the result
 // screen (the candidate's home screen once they've taken the exam) so it's
 // visible on every login, not tucked behind a separate button/route.
+// Downloads a real .xlsx of the results board, same rows/order/columns a
+// candidate sees in buildLeaderboardCard below — but with each candidate's
+// actual phone number (admins already see those unmasked everywhere else
+// in this dashboard) instead of the masked one the public board shows.
+// SheetJS is loaded from a CDN on demand, same pattern pdf.js already uses
+// elsewhere in this file, rather than shipping it in every page load for a
+// button an admin might use once.
+async function exportResultsExcel(btn) {
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = L("loading");
+  try {
+    const XLSX = await import("https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm");
+    const snap = await getDocs(collection(db, "leaderboard"));
+    const rows = [];
+    snap.forEach((d) => rows.push({ id: d.id, ...d.data() }));
+    if (!rows.length) { alert(L("leaderboardEmpty")); return; }
+    // Exact same ranking as the public board (score desc, faster time wins
+    // a tie) — an export that ordered differently from what candidates see
+    // would defeat the point of it matching.
+    rows.sort((a, b) => {
+      if ((b.score ?? 0) !== (a.score ?? 0)) return (b.score ?? 0) - (a.score ?? 0);
+      const ad = a.durationSec ?? Infinity, bd = b.durationSec ?? Infinity;
+      return ad - bd;
+    });
+    const acceptCount = state.examConfig.acceptCount || 0;
+    const usedSections = new Set();
+    rows.forEach((row) => SECTIONS.forEach((s) => { if ((row.sectionScores?.[s]?.total || 0) > 0) usedSections.add(s); }));
+    const sectionCols = SECTIONS.filter((s) => usedSections.has(s));
+    const header = [
+      "#", L("name"), L("phone"),
+      ...sectionCols.map((s) => L(s)),
+      L("total"), L("timeTaken"),
+      ...(acceptCount ? [L("admissionStatus")] : []),
+    ];
+    const aoa = [header];
+    rows.forEach((row, i) => {
+      const rank = i + 1;
+      const cand = state.candidates.find((c) => c.id === row.id);
+      const ss = row.sectionScores || {};
+      aoa.push([
+        rank, row.name || "", cand?.phone || row.phoneMasked || "",
+        ...sectionCols.map((s) => ss[s] ? `${ss[s].score}/${ss[s].total}` : "—"),
+        row.score ?? 0, row.durationSec != null ? fmtTime(row.durationSec) : "—",
+        ...(acceptCount ? [rank <= acceptCount ? L("admissionAccepted") : ""] : []),
+      ]);
+    });
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws["!cols"] = header.map((_, i) => ({ wch: i === 1 ? 20 : 14 }));
+    const wb = XLSX.utils.book_new();
+    // Right-to-left sheet view so the columns read in the same order
+    // they're defined (rightmost = "#") when opened in Excel, matching how
+    // the on-site table itself is laid out.
+    wb.Workbook = { Views: [{ RTL: true }] };
+    XLSX.utils.book_append_sheet(wb, ws, L("leaderboardTitle").slice(0, 31));
+    XLSX.writeFile(wb, `${L("leaderboardTitle")}_${fmtDateTime(new Date()).replace(/[/:]/g, "-")}.xlsx`);
+  } catch (err) {
+    alert(`${L("error")}: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText;
+  }
+}
+
 function buildLeaderboardCard() {
   const card = el(`
     <div class="card">

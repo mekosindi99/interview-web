@@ -60,6 +60,7 @@ export const t = {
     lastSeenDaysAgo: "قبل {n} يوم",
     offlineNow: "غير متصل",
     syncLeaderboardAllBtn: "نشر النتائج للمشتركين",
+    exportExcelBtn: "تنزيل النتائج Excel",
     syncLeaderboardAllNone: "ما فيه مرشحين خلصوا الامتحان بعد.",
     syncLeaderboardAllProgress: "جاري النشر... {done}/{total}",
     syncLeaderboardAllDone: "تم النشر لـ{published} من أصل {total} (الباقي لا يزال بانتظار التصحيح اليدوي). تمت إزالة {removed} نتيجة لحسابات محذوفة.",
