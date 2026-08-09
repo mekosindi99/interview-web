@@ -7,11 +7,41 @@
   --primary-dark: #8f2347;
   --ok: #1a8a4a;
   --bad: #c0392b;
-  --border: #e3e5ea;
+  --warn: #a06600;
   /* Deliberately blue — distinct from --primary (pink, used for the top-3
      leaderboard tint) and --ok (green, used for "مقبول") so "this is my
-     row" never blends into either of those. */
+     row" never blends into either of those. Also doubles as the generic
+     "info" status color (status-badge.in-progress). */
   --me-highlight: #2563eb;
+  --border: #e3e5ea;
+
+  /* ---- Design system tokens ----
+     Every tinted surface below (badges, chips, tags, notices, the "picked"
+     option, page-nav buttons…) is derived from the theme's own --card via
+     color-mix() instead of a second, hand-picked hex value per theme. That
+     used to mean every one of those components needed its own manual
+     `:root[data-theme="dark"] .x { background: #someHex }` override (30+
+     lines of them, previously right here) which was easy to forget updating
+     whenever a light-mode color changed. Deriving from --card means dark
+     mode is automatically correct — there is nothing left to keep in sync. */
+  --ok-bg: color-mix(in srgb, var(--ok) 14%, var(--card));
+  --bad-bg: color-mix(in srgb, var(--bad) 12%, var(--card));
+  --warn-bg: color-mix(in srgb, var(--warn) 18%, var(--card));
+  --info-bg: color-mix(in srgb, var(--me-highlight) 12%, var(--card));
+  --primary-bg: color-mix(in srgb, var(--primary) 10%, var(--card));
+  /* A step lighter than --card (light theme) / a step lighter than --card
+     (dark theme too, since color-mix always mixes toward --text) — used for
+     "recessed panel inside a card" content (quoted passages, table headers)
+     that needs to read as distinct from the card around it in both themes. */
+  --surface: color-mix(in srgb, var(--text) 4%, var(--card));
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--primary) 22%, transparent);
+  --shadow-sm: 0 1px 2px rgba(20, 22, 30, .05), 0 1px 1px rgba(20, 22, 30, .04);
+  --shadow-md: 0 10px 26px -10px rgba(20, 22, 30, .18);
+  --shadow-lg: 0 20px 48px -14px rgba(20, 22, 30, .22);
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+
   font-family: "Cairo", "Segoe UI", Tahoma, "Noto Sans Arabic", "Noto Naskh Arabic", sans-serif;
 }
 
@@ -24,43 +54,17 @@
   --primary-dark: #b8305c;
   --ok: #2fbf6c;
   --bad: #e0574a;
-  --border: #2c303b;
+  --warn: #f5c563;
   --me-highlight: #5b9dff;
+  --border: #2c303b;
+  /* Shadows need more contrast against a dark page than the light-mode
+     values give — same tokens, stronger alpha. Everything above this
+     (ok-bg, bad-bg, etc.) recomputes correctly on its own via color-mix,
+     no dark-specific redeclaration needed. */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .4);
+  --shadow-md: 0 12px 30px -10px rgba(0, 0, 0, .55);
+  --shadow-lg: 0 24px 56px -16px rgba(0, 0, 0, .6);
 }
-:root[data-theme="dark"] input,
-:root[data-theme="dark"] select,
-:root[data-theme="dark"] textarea {
-  background: var(--card);
-  color: var(--text);
-}
-
-/* Tinted badges/chips use fixed light pastel backgrounds with dark ink for
-   contrast on purpose (color-coded status), which reads fine on a light
-   page but goes invisible on a dark one — re-tint them for dark mode. */
-:root[data-theme="dark"] .action-chip { background: #2a2e38; color: var(--text); }
-:root[data-theme="dark"] .action-chip:hover { background: #343947; }
-:root[data-theme="dark"] .action-chip.warn { background: #4a3a12; color: #f5c563; }
-:root[data-theme="dark"] .action-chip.warn:hover { background: #5c4818; }
-:root[data-theme="dark"] .action-chip.danger { background: #4a2320; color: #f19188; }
-:root[data-theme="dark"] .action-chip.danger:hover { background: #5c2b27; }
-:root[data-theme="dark"] .status-badge.not-started { background: #2a2e38; color: var(--muted); }
-:root[data-theme="dark"] .status-badge.in-progress { background: #1c2c4a; color: #7fa8ff; }
-:root[data-theme="dark"] .status-badge.submitted { background: #4a3a12; color: #f5c563; }
-:root[data-theme="dark"] .status-badge.graded { background: #143a26; color: #4fd88a; }
-:root[data-theme="dark"] .status-badge.blocked { background: #4a2320; color: #f19188; }
-:root[data-theme="dark"] button { background: #2a2e38; }
-:root[data-theme="dark"] button.ghost:hover { background: #343947; }
-:root[data-theme="dark"] button.link.warn { color: #f5c563; }
-:root[data-theme="dark"] .notice { background: #4a3a12; border-color: #7a5f1f; color: var(--text); }
-:root[data-theme="dark"] table.grid th { background: #23262f; }
-:root[data-theme="dark"] .tag { background: #2a2e38; }
-:root[data-theme="dark"] .tag.warn { background: #4a2320; color: #f19188; }
-:root[data-theme="dark"] .option.picked { background: #3a1f2b; }
-:root[data-theme="dark"] .section-tag { background: #143a26; color: #4fd88a; }
-:root[data-theme="dark"] .passage,
-:root[data-theme="dark"] .writing-answer-view { background: #23262f; }
-:root[data-theme="dark"] .page-nav-btn { background: rgba(30,33,42,.85); }
-:root[data-theme="dark"] .page-nav-btn:hover { background: #1e212a; }
 
 .theme-toggle-btn {
   width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--border);
@@ -73,13 +77,38 @@
 
 body {
   margin: 0;
-  background: var(--bg);
   color: var(--text);
   min-height: 100vh;
+  /* Two very faint radial tints (brand pink + the "me" blue) fixed to the
+     viewport corners, over the flat --bg — a subtle sense of depth behind
+     every screen instead of one flat color, without ever competing with
+     actual content contrast. background-attachment:fixed keeps it from
+     visibly repeating/shifting as pages scroll. */
+  background:
+    radial-gradient(circle at 12% -8%, color-mix(in srgb, var(--primary) 10%, transparent), transparent 55%),
+    radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--me-highlight) 8%, transparent), transparent 50%),
+    var(--bg);
+  background-attachment: fixed;
 }
 
 #app { max-width: 960px; margin: 0 auto; padding: 16px; overflow-x: hidden; }
 img, canvas, svg, video, audio { max-width: 100%; }
+
+/* Thin, theme-matched scrollbar for the handful of horizontally/vertically
+   scrolling containers (data tables, the manual-grading question list, the
+   admin drawer) — Firefox + WebKit only (scrollbar-width/color has no
+   fallback need: an unstyled native scrollbar is a perfectly fine default
+   everywhere else this doesn't apply). */
+.table-scroll, .manual-q-list, .admin-drawer, .material-viewport {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.table-scroll::-webkit-scrollbar, .manual-q-list::-webkit-scrollbar,
+.admin-drawer::-webkit-scrollbar, .material-viewport::-webkit-scrollbar { width: 8px; height: 8px; }
+.table-scroll::-webkit-scrollbar-thumb, .manual-q-list::-webkit-scrollbar-thumb,
+.admin-drawer::-webkit-scrollbar-thumb, .material-viewport::-webkit-scrollbar-thumb {
+  background: var(--border); border-radius: 999px;
+}
 
 .lang-row {
   display: flex; align-items: center; gap: 8px; justify-content: flex-end; flex-wrap: wrap; row-gap: 8px;
@@ -90,8 +119,8 @@ img, canvas, svg, video, audio { max-width: 100%; }
 .topbar-timer-only { justify-content: center; }
 
 .card {
-  background: var(--card); border: 1px solid var(--border); border-radius: 12px;
-  padding: 20px; margin-bottom: 16px;
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  padding: 20px; margin-bottom: 16px; box-shadow: var(--shadow-sm);
 }
 .center-card { max-width: 420px; margin: 40px auto; text-align: center; }
 /* Result screen: credentials/status/score cards used to each set their own
@@ -101,7 +130,7 @@ img, canvas, svg, video, audio { max-width: 100%; }
    context made them read as different sizes. One shared wrapper now owns
    the single 420px cap and consistent gap; the cards inside just fill it. */
 .result-shell { max-width: 420px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
-.result-shell .card { margin: 0; box-shadow: 0 1px 3px rgba(0,0,0,.04); }
+.result-shell .card { margin: 0; }
 /* Now a direct child of .result-shell itself (not a separately-sized
    sibling trying to replicate its width) — inherits the exact same
    420px cap and margin:0 from ".result-shell .card" above, so there's no
@@ -112,7 +141,7 @@ img, canvas, svg, video, audio { max-width: 100%; }
    same already-uploaded thumbnail image, nothing about the stored file/
    pages is touched. */
 .material-entry-card { cursor: pointer; text-align: center; transition: box-shadow .15s, transform .15s; }
-.material-entry-card:hover { box-shadow: 0 6px 18px rgba(0,0,0,.08); transform: translateY(-1px); }
+.material-entry-card:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
 .material-entry-label { font-weight: 700; font-size: 16px; margin-bottom: 12px; }
 .material-entry-thumb {
   width: 100%; height: 160px; border-radius: 10px; background: var(--bg); border: 1px solid var(--border);
@@ -136,59 +165,71 @@ img, canvas, svg, video, audio { max-width: 100%; }
    card is narrower than the generic .center-card because a login form is two
    fields wide, not a content page — a wide box around short fields is what
    made it feel unsettled. */
-.login-card { max-width: 380px; padding: 28px 24px; }
+.login-card {
+  max-width: 380px; padding: 32px 24px 28px; position: relative; overflow: hidden;
+  box-shadow: var(--shadow-lg);
+}
+/* A thin brand-to-"me"-blue gradient stripe along the card's top edge — the
+   one place on the whole site guaranteed to be the very first thing every
+   user (candidate or admin) sees, so it carries a small deliberate flourish
+   the rest of the (mostly form-heavy) UI intentionally doesn't. */
+.login-card::before {
+  content: ""; position: absolute; inset: 0 0 auto 0; height: 4px;
+  background: linear-gradient(90deg, var(--primary), var(--me-highlight));
+}
 .login-brand { margin-bottom: 22px; }
 .login-brand h1 { margin: 0 0 4px; }
 .login-sub { margin: 0; color: var(--muted); font-size: 14px; }
 .login-form { text-align: start; }
 .login-form label { margin-bottom: 16px; font-weight: 600; color: var(--text); }
 .login-form input { margin-top: 6px; padding: 12px; }
-.login-form input:focus-visible {
-  outline: none; border-color: var(--primary);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent);
-}
 /* Sits under its own field as part of the label, so it moves with the field
    rather than floating between the two as a loose paragraph. */
 .field-hint { display: block; margin-top: 6px; font-size: 12px; font-weight: 400; color: var(--muted); }
-.field-hint-warn { color: #a06600; }
-.login-form input.input-warn { border-color: #e0b050; }
+.field-hint-warn { color: var(--warn); }
+.login-form input.input-warn { border-color: var(--warn); }
 .login-alert {
-  background: #fff7e6; border: 1px solid #f0c36d; color: #7a5200;
-  padding: 10px 12px; border-radius: 8px; margin-bottom: 16px;
+  background: var(--warn-bg); border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); color: var(--warn);
+  padding: 10px 12px; border-radius: var(--radius-sm); margin-bottom: 16px;
   font-size: 13px; text-align: start; line-height: 1.5;
 }
 /* Full width and taller than the default pill: it's the only action on the
    screen, so it shouldn't read as one option among several. */
 .login-submit { width: 100%; min-height: 46px; font-size: 15px; font-weight: 700; margin-top: 4px; }
 
-:root[data-theme="dark"] .login-alert { background: #3a2f14; border-color: #6b5320; color: #f0d79a; }
-:root[data-theme="dark"] .field-hint-warn { color: #e0b050; }
-
-h1 { font-size: 22px; margin: 0 0 8px; }
-h2 { font-size: 18px; margin: 0 0 12px; }
+h1 { font-size: 22px; margin: 0 0 8px; font-weight: 800; letter-spacing: -.01em; }
+h2 { font-size: 18px; margin: 0 0 12px; font-weight: 800; }
+h3 { font-size: 16px; margin: 0 0 10px; font-weight: 800; }
 
 form label { display: block; text-align: start; margin-bottom: 12px; font-size: 14px; color: var(--muted); }
 form label.checkbox-row { display: flex; align-items: center; gap: 8px; }
 form label.checkbox-row input[type="checkbox"] { width: auto; margin-top: 0; }
-form input, form select {
-  width: 100%; padding: 10px; margin-top: 4px; border: 1px solid var(--border); border-radius: 8px;
-  font-size: 15px; background: #fff; color: var(--text);
+form input, form select, form textarea, .writing-answer {
+  width: 100%; padding: 10px; margin-top: 4px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  font-size: 15px; background: var(--card); color: var(--text); transition: border-color .15s, box-shadow .15s;
+}
+form input:focus-visible, form select:focus-visible, form textarea:focus-visible, .writing-answer:focus-visible {
+  outline: none; border-color: var(--primary); box-shadow: var(--focus-ring);
 }
 
 button {
   cursor: pointer; border: none; border-radius: 999px; padding: 10px 20px; font-size: 14px;
-  background: #eee; color: var(--text); transition: background .15s ease, transform .08s ease;
+  background: var(--bg); color: var(--text); transition: background .15s ease, transform .08s ease, box-shadow .15s ease;
   min-height: 40px; box-sizing: border-box;
 }
-button:not(.link):hover { transform: translateY(-1px); }
-button:not(.link):active { transform: translateY(0) scale(.97); }
-button.primary { background: var(--primary); color: #fff; }
-button.primary:hover { background: var(--primary-dark); }
-button.ghost { background: var(--bg); border: 1px solid var(--border); }
-button.ghost:hover { background: #ececec; }
-button.link { background: none; padding: 4px 8px; text-decoration: underline; color: var(--primary); border-radius: 4px; }
+button:not(.link):hover { transform: translateY(-1px); box-shadow: var(--shadow-sm); }
+button:not(.link):active { transform: translateY(0) scale(.97); box-shadow: none; }
+button:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+button.primary {
+  background: linear-gradient(135deg, var(--primary), var(--primary-dark)); color: #fff;
+  box-shadow: var(--shadow-sm);
+}
+button.primary:hover { background: linear-gradient(135deg, var(--primary-dark), var(--primary)); box-shadow: var(--shadow-md); }
+button.ghost { background: var(--card); border: 1px solid var(--border); }
+button.ghost:hover { background: var(--surface); }
+button.link { background: none; padding: 4px 8px; text-decoration: underline; color: var(--primary); border-radius: var(--radius-sm); }
 button.link.danger { color: var(--bad); }
-button.link.warn { color: #a06600; }
+button.link.warn { color: var(--warn); }
 button.ghost.danger { color: var(--bad); border-color: var(--bad); }
 button:disabled { opacity: .5; cursor: not-allowed; }
 
@@ -222,11 +263,11 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 /* ---------- Candidate cards (replaces the old cramped table) ---------- */
 .cand-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; margin-top: 8px; }
 .cand-card {
-  background: var(--card); border: 1px solid var(--border); border-radius: 16px;
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-lg);
   padding: 16px; display: flex; flex-direction: column; gap: 10px;
-  box-shadow: 0 1px 3px rgba(0,0,0,.04); transition: box-shadow .15s, transform .15s;
+  box-shadow: var(--shadow-sm); transition: box-shadow .15s, transform .15s;
 }
-.cand-card:hover { box-shadow: 0 6px 18px rgba(0,0,0,.08); transform: translateY(-1px); }
+.cand-card:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
 .cand-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .cand-card-name { font-weight: 800; font-size: 16px; display: flex; align-items: center; gap: 6px; }
 .presence-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
@@ -234,11 +275,11 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .presence-dot.offline { background: var(--muted); opacity: .5; }
 .presence-last-seen { font-size: 11px; font-weight: 400; color: var(--muted); }
 .status-badge { font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 999px; white-space: nowrap; }
-.status-badge.not-started { background: #eef1f5; color: var(--muted); }
-.status-badge.in-progress { background: #e2ecff; color: #1d4ed8; }
-.status-badge.submitted { background: #fff3d6; color: #a06600; }
-.status-badge.graded { background: #e2f6ea; color: var(--ok); }
-.status-badge.blocked { background: #fdecea; color: var(--bad); }
+.status-badge.not-started { background: var(--bg); color: var(--muted); }
+.status-badge.in-progress { background: var(--info-bg); color: var(--me-highlight); }
+.status-badge.submitted { background: var(--warn-bg); color: var(--warn); }
+.status-badge.graded { background: var(--ok-bg); color: var(--ok); }
+.status-badge.blocked { background: var(--bad-bg); color: var(--bad); }
 .cand-card-creds { background: var(--bg); border-radius: 10px; padding: 8px 12px; }
 .cand-card-creds .cred-row { padding: 3px 0; }
 /* Equal-width grid (not flex) on every screen size, not just mobile —
@@ -249,14 +290,15 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .action-chip {
   display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 6px 12px;
   font-size: 12px; font-weight: 700; min-height: 30px; box-sizing: border-box; width: 100%;
-  background: #eef1f5; color: var(--text); border-radius: 999px; border: none;
+  background: var(--bg); color: var(--text); border-radius: 999px; border: none;
+  transition: background .15s, transform .15s, box-shadow .15s;
 }
 .action-chip-icon { font-size: 13px; line-height: 1; }
-.action-chip:hover { background: #e2e6ec; transform: translateY(-1px); }
-.action-chip.warn { background: #fff3d6; color: #8a5a00; }
-.action-chip.warn:hover { background: #ffe9b3; }
-.action-chip.danger { background: #fdecea; color: var(--bad); }
-.action-chip.danger:hover { background: #fad4d1; }
+.action-chip:hover { background: var(--surface); transform: translateY(-1px); box-shadow: var(--shadow-sm); }
+.action-chip.warn { background: var(--warn-bg); color: var(--warn); }
+.action-chip.warn:hover { background: color-mix(in srgb, var(--warn) 28%, var(--card)); }
+.action-chip.danger { background: var(--bad-bg); color: var(--bad); }
+.action-chip.danger:hover { background: color-mix(in srgb, var(--bad) 22%, var(--card)); }
 
 .cred-card { max-width: 420px; margin: 0 auto 16px; }
 .cred-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; border-bottom: 1px dashed var(--border); }
@@ -345,7 +387,10 @@ button:disabled { opacity: .5; cursor: not-allowed; }
   font-size: 16px; line-height: 1; display: flex; align-items: center; justify-content: center;
 }
 .pw-eye:hover { background: var(--bg); }
-.notice { background: #fff7e6; border: 1px solid #f0c36d; padding: 10px; border-radius: 8px; margin-top: 10px; font-size: 14px; }
+.notice {
+  background: var(--warn-bg); border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); color: var(--text);
+  padding: 10px; border-radius: var(--radius-sm); margin-top: 10px; font-size: 14px;
+}
 
 .shell { display: flex; flex-direction: column; gap: 12px; }
 .topbar {
@@ -440,7 +485,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .table-scroll table.grid { margin-bottom: 0; }
 table.grid { width: 100%; min-width: 560px; border-collapse: collapse; background: var(--card); border-radius: 12px; overflow: hidden; }
 table.grid th, table.grid td { padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 14px; text-align: start; white-space: nowrap; }
-table.grid th { background: #fafafa; color: var(--muted); font-weight: 600; }
+table.grid th { background: var(--surface); color: var(--muted); font-weight: 600; }
 .row-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 /* Unscoped (was table.grid .mono only, so a phone/date value marked mono
    outside a table — e.g. the credentials/status rows — got no styling at
@@ -518,8 +563,8 @@ table.grid.leaderboard-table td.leaderboard-name { font-weight: 700; }
 .q-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
 .q-card.inactive { opacity: .55; }
 .q-head { display: flex; gap: 6px; margin-bottom: 6px; }
-.tag { font-size: 11px; background: #eef1f5; border-radius: 12px; padding: 2px 10px; color: var(--muted); }
-.tag.warn { background: #fdecea; color: var(--bad); }
+.tag { font-size: 11px; background: var(--bg); border-radius: 12px; padding: 2px 10px; color: var(--muted); }
+.tag.warn { background: var(--bad-bg); color: var(--bad); }
 .q-thumb { max-width: 160px; border-radius: 8px; margin-top: 8px; display: block; }
 .q-image { max-width: 100%; border-radius: 10px; margin: 10px 0; }
 
@@ -537,7 +582,7 @@ table.grid.leaderboard-table td.leaderboard-name { font-weight: 700; }
   display: block; border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin-bottom: 8px;
   cursor: pointer; font-size: 15px;
 }
-.option.picked { border-color: var(--primary); background: #fdf1f5; }
+.option.picked { border-color: var(--primary); background: var(--primary-bg); }
 .option input { width: auto; margin-inline-end: 8px; }
 .exam-nav { max-width: 640px; margin: 0 auto; justify-content: space-between; }
 
@@ -580,10 +625,10 @@ table.grid.leaderboard-table td.leaderboard-name { font-weight: 700; }
 }
 
 /* ---------- TOEFL sections: passage/audio, timer, recorder, writing ---------- */
-.section-tag { background: #eef7f0; color: var(--ok); }
+.section-tag { background: var(--ok-bg); color: var(--ok); }
 
 .passage {
-  background: #fafbfc; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm);
   padding: 12px; margin-bottom: 12px; font-size: 14px; line-height: 1.7; white-space: pre-wrap;
 }
 /* Custom listening-audio player (see buildAudioPlayer in app.js), replacing
@@ -627,12 +672,13 @@ table.grid.leaderboard-table td.leaderboard-name { font-weight: 700; }
 }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
 
-.writing-answer {
-  width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 8px;
-  font-size: 15px; font-family: inherit; resize: vertical; background: #fff; color: var(--text);
-}
+/* Base sizing/colors for .writing-answer come from the shared
+   "form input, form select, form textarea, .writing-answer" rule near the
+   top of this file — this just adds the one property that rule can't:
+   textarea-specific resize behavior. */
+.writing-answer { font-family: inherit; resize: vertical; }
 .writing-answer-view {
-  background: #fafbfc; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm);
   padding: 10px; font-size: 14px; white-space: pre-wrap; margin: 6px 0;
 }
 
@@ -666,10 +712,10 @@ table.grid.leaderboard-table td.leaderboard-name { font-weight: 700; }
 .page-nav-btn {
   position: absolute; top: 50%; transform: translateY(-50%); z-index: 5;
   width: 40px; height: 72px; padding: 0; font-size: 26px; line-height: 1;
-  background: rgba(255,255,255,.85); border: 1px solid var(--border);
-  box-shadow: 0 2px 8px rgba(0,0,0,.12); color: var(--text);
+  background: color-mix(in srgb, var(--card) 85%, transparent); border: 1px solid var(--border);
+  box-shadow: var(--shadow-md); color: var(--text);
 }
-.page-nav-btn:hover { background: #fff; }
+.page-nav-btn:hover { background: var(--card); }
 .page-nav-btn.prev { inset-inline-start: 8px; }
 .page-nav-btn.next { inset-inline-end: 8px; }
 .page-nav-btn:disabled { opacity: 0; pointer-events: none; }
@@ -719,7 +765,7 @@ table.grid.leaderboard-table td.leaderboard-name { font-weight: 700; }
   width: 52px; height: 52px; border-radius: 16px; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center; font-size: 26px;
   background: linear-gradient(135deg, var(--primary), var(--primary-dark)); color: #fff;
-  box-shadow: 0 6px 16px -6px rgba(184, 48, 92, .5);
+  box-shadow: 0 6px 16px -6px color-mix(in srgb, var(--primary) 55%, transparent);
 }
 .backup-hero-text { flex: 1; min-width: 200px; }
 .backup-hero-text h3 { margin: 0 0 4px; }
@@ -742,14 +788,13 @@ button.primary.backup-run-btn { display: inline-flex; align-items: center; gap: 
   border: 1px solid var(--border); border-radius: 14px; background: var(--card);
   transition: box-shadow .15s, transform .15s;
 }
-.backup-row:hover { box-shadow: 0 4px 14px -6px rgba(0,0,0,.15); transform: translateY(-1px); }
+.backup-row:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
 .backup-row-icon {
   width: 38px; height: 38px; border-radius: 10px; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center; font-size: 18px;
   background: var(--bg); border: 1px solid var(--border);
 }
-.backup-row.is-latest .backup-row-icon { background: #eafaf1; border-color: #b7ecd0; }
-:root[data-theme="dark"] .backup-row.is-latest .backup-row-icon { background: #143a26; border-color: #1f5c3d; }
+.backup-row.is-latest .backup-row-icon { background: var(--ok-bg); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
 .backup-row-info { flex: 1; min-width: 0; }
 .backup-row-date { font-weight: 700; }
 .backup-row-meta { display: flex; align-items: center; gap: 8px; margin-top: 3px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
