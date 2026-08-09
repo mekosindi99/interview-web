@@ -974,6 +974,198 @@ app.delete("/by-phone/:phone", requireAdmin, async (req, res) => {
   }
 });
 
+// ── Automatic Firestore backups ──
+// The Spark (free) plan this project runs on has no Cloud Functions, so
+// there's no free way to back up "on every write" in real time (that needs
+// a Blaze billing account for onWrite triggers). This is the free-tier
+// equivalent: a full export of every collection, run on a timer plus a
+// manual "نسخة الآن" button, written as one JSON file to the same private
+// Drive folder everything else already uses — restorable from the admin
+// panel, or by downloading the file and keeping a copy yourself. Exists
+// because a full Firestore wipe (accidental, from the console) has no other
+// undo — Firestore itself has no trash/undo for deleted documents.
+const BACKUP_INTERVAL_MS = 6 * 60 * 60 * 1000; // every 6h
+const BACKUP_KEEP = 20; // older backups beyond this are trashed (still recoverable via Drive trash for ~30 days)
+const BACKUP_COLLECTIONS = ["users", "attempts", "questions", "questionAnswers", "settings", "leaderboard", "blockedDevices", "meta"];
+
+// Firestore Timestamp fields don't survive JSON.stringify — converted to a
+// plain {__ts: epochMillis} marker here and back on restore.
+function tsToPlain(v) {
+  if (v && typeof v.toDate === "function") return { __ts: v.toDate().getTime() };
+  if (Array.isArray(v)) return v.map(tsToPlain);
+  if (v && typeof v === "object") {
+    const out = {};
+    for (const k of Object.keys(v)) out[k] = tsToPlain(v[k]);
+    return out;
+  }
+  return v;
+}
+function plainToTs(v) {
+  if (v && typeof v === "object" && !Array.isArray(v) && "__ts" in v && Object.keys(v).length === 1) {
+    return admin.firestore.Timestamp.fromMillis(v.__ts);
+  }
+  if (Array.isArray(v)) return v.map(plainToTs);
+  if (v && typeof v === "object") {
+    const out = {};
+    for (const k of Object.keys(v)) out[k] = plainToTs(v[k]);
+    return out;
+  }
+  return v;
+}
+
+// users/{uid}/pastAttempts/{id} and users/{uid}/loginDevices/{id} are the
+// only subcollections in firestore.rules — everything else lives at the top
+// level, so those two collectionGroup scans plus BACKUP_COLLECTIONS above
+// cover the entire database.
+async function collectBackup() {
+  const data = { exportedAt: new Date().toISOString(), collections: {}, subcollections: { pastAttempts: {}, loginDevices: {} } };
+  for (const name of BACKUP_COLLECTIONS) {
+    const snap = await db.collection(name).get();
+    const obj = {};
+    snap.forEach((d) => { obj[d.id] = tsToPlain(d.data()); });
+    data.collections[name] = obj;
+  }
+  const pastSnap = await db.collectionGroup("pastAttempts").get();
+  pastSnap.forEach((d) => {
+    const uid = d.ref.parent.parent.id;
+    data.subcollections.pastAttempts[`${uid}/${d.id}`] = tsToPlain(d.data());
+  });
+  const loginSnap = await db.collectionGroup("loginDevices").get();
+  loginSnap.forEach((d) => {
+    const uid = d.ref.parent.parent.id;
+    data.subcollections.loginDevices[`${uid}/${d.id}`] = tsToPlain(d.data());
+  });
+  return data;
+}
+
+// Writes every document back exactly as it was exported (set, not merge —
+// a restored doc should match the backup exactly, not blend with whatever's
+// currently there). Doesn't delete anything not in the backup: the only
+// real-world use of this is restoring after data got wiped/lost, where the
+// live database is already empty or missing pieces, not pruning it further.
+async function restoreBackup(data) {
+  const BATCH_LIMIT = 400;
+  let batch = db.batch();
+  let ops = 0;
+  async function stage(ref, docData) {
+    batch.set(ref, plainToTs(docData));
+    ops++;
+    if (ops >= BATCH_LIMIT) { await batch.commit(); batch = db.batch(); ops = 0; }
+  }
+  for (const name of Object.keys(data.collections || {})) {
+    for (const [id, docData] of Object.entries(data.collections[name])) {
+      await stage(db.collection(name).doc(id), docData);
+    }
+  }
+  for (const [key, docData] of Object.entries(data.subcollections?.pastAttempts || {})) {
+    const [uid, id] = key.split("/");
+    await stage(db.collection("users").doc(uid).collection("pastAttempts").doc(id), docData);
+  }
+  for (const [key, docData] of Object.entries(data.subcollections?.loginDevices || {})) {
+    const [uid, id] = key.split("/");
+    await stage(db.collection("users").doc(uid).collection("loginDevices").doc(id), docData);
+  }
+  if (ops > 0) await batch.commit();
+}
+
+async function pruneOldBackups() {
+  const list = await drive.files.list({
+    q: `'${DRIVE_FOLDER_ID}' in parents and trashed = false and name contains 'backup__'`,
+    fields: "files(id,name,createdTime)",
+    orderBy: "createdTime desc",
+    pageSize: 200,
+  });
+  const files = list.data.files || [];
+  for (const f of files.slice(BACKUP_KEEP)) await deleteOrTrashFile(f.id);
+}
+
+async function runBackup() {
+  const data = await collectBackup();
+  const buffer = Buffer.from(JSON.stringify(data));
+  const name = `backup__${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+  const fileId = await uploadToDrive({ name, mimeType: "application/json", buffer });
+  await pruneOldBackups().catch((err) => console.error("prune backups failed", err));
+  return { fileId, name };
+}
+
+app.post("/backup/run", uploadLimiter, requireAdmin, async (req, res) => {
+  try {
+    const result = await runBackup();
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    sendServerError(res, err, { exposeDetail: true });
+  }
+});
+
+app.get("/backup/list", fileProxyLimiter, requireAdmin, async (req, res) => {
+  try {
+    const list = await drive.files.list({
+      q: `'${DRIVE_FOLDER_ID}' in parents and trashed = false and name contains 'backup__'`,
+      fields: "files(id,name,createdTime,size)",
+      orderBy: "createdTime desc",
+      pageSize: BACKUP_KEEP,
+    });
+    res.json({ ok: true, files: list.data.files || [] });
+  } catch (err) {
+    sendServerError(res, err, { exposeDetail: true });
+  }
+});
+
+app.get("/backup/download/:fileId", fileProxyLimiter, requireAdmin, async (req, res) => {
+  try {
+    const { fileId } = req.params;
+    if (!isValidDriveFileId(fileId)) return res.status(400).json({ error: "invalid file id" });
+    const driveRes = await drive.files.get({ fileId, alt: "media" }, { responseType: "stream" });
+    res.setHeader("Content-Type", "application/json");
+    res.setHeader("Content-Disposition", "attachment; filename=\"backup.json\"");
+    driveRes.data.pipe(res);
+  } catch (err) {
+    sendServerError(res, err, { exposeDetail: true });
+  }
+});
+
+// Restores from a backup already sitting in Drive (one from the /backup/list
+// history). Deliberately admin-only and requires no request body beyond the
+// fileId — the confirmation UI lives entirely client-side (renderBackupTab).
+app.post("/backup/restore/:fileId", uploadLimiter, requireAdmin, async (req, res) => {
+  try {
+    const { fileId } = req.params;
+    if (!isValidDriveFileId(fileId)) return res.status(400).json({ error: "invalid file id" });
+    const driveRes = await drive.files.get({ fileId, alt: "media" }, { responseType: "stream" });
+    const chunks = [];
+    await new Promise((resolve, reject) => {
+      driveRes.data.on("data", (c) => chunks.push(c));
+      driveRes.data.on("end", resolve);
+      driveRes.data.on("error", reject);
+    });
+    await restoreBackup(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+    res.json({ ok: true });
+  } catch (err) {
+    sendServerError(res, err, { exposeDetail: true });
+  }
+});
+
+// Restores from a backup file uploaded straight from the admin's own
+// computer — covers the case where Drive itself is unavailable/emptied but
+// the admin kept a downloaded copy (the whole point of the download button
+// in the same panel).
+app.post("/backup/restore-upload", uploadLimiter, requireAdmin, upload.single("file"), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: "no file" });
+    await restoreBackup(JSON.parse(req.file.buffer.toString("utf8")));
+    res.json({ ok: true });
+  } catch (err) {
+    sendServerError(res, err, { exposeDetail: true });
+  }
+});
+
+if (DRIVE_FOLDER_ID) {
+  setInterval(() => { runBackup().catch((err) => console.error("scheduled backup failed", err)); }, BACKUP_INTERVAL_MS);
+  // Also once shortly after startup/deploy, so a fresh instance doesn't sit
+  // for a full interval with zero backups yet.
+  setTimeout(() => { runBackup().catch((err) => console.error("startup backup failed", err)); }, 60 * 1000);
+}
+
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`interview-admin-server listening on ${port}`));
 

@@ -961,6 +961,7 @@ const ADMIN_TABS = [
   { id: "settings", icon: "⚙️", labelKey: "examSettings", adminOnly: true },
   { id: "admission", icon: "🎓", labelKey: "admissionTab", adminOnly: true },
   { id: "coadmins", icon: "🛡️", labelKey: "coadmins", adminOnly: true },
+  { id: "backup", icon: "💾", labelKey: "backupTab", adminOnly: true },
   { id: "about", icon: "ℹ️", labelKey: "aboutTab", adminOnly: true },
 ];
 
@@ -998,6 +999,7 @@ function renderAdminShell() {
   else if (tab === "settings" && isAdmin) body.appendChild(renderExamSettingsTab());
   else if (tab === "admission" && isAdmin) body.appendChild(renderAdmissionTab());
   else if (tab === "coadmins" && isAdmin) body.appendChild(renderCoadminsTab());
+  else if (tab === "backup" && isAdmin) body.appendChild(renderBackupTab());
   else if (tab === "about" && isAdmin) body.appendChild(renderAboutTab());
   return wrap;
 }
@@ -2608,6 +2610,169 @@ const ABOUT_GROUPS = {
     ]},
   ],
 };
+// ---------- Backup tab (admin only) ----------
+// Server-side (server/index.js) runs a full Firestore export every 6h plus
+// on-demand here, written to the same private Drive folder everything else
+// uses, and always keeps the newest 20. This panel just surfaces that: a
+// manual "backup now" button, the list of what's saved with download/restore
+// per entry, and a separate upload-your-own-file restore for a copy the
+// admin downloaded and kept locally. See the comment above BACKUP_INTERVAL_MS
+// in server/index.js for why this is timer-based rather than "on every
+// change" (that needs Cloud Functions, which needs the paid Blaze plan).
+function renderBackupTab() {
+  const wrap = el(`<div></div>`);
+  if (!ADMIN_SERVER_URL) {
+    wrap.appendChild(el(`<div class="card"><p class="hint">${L("backupHint")}</p></div>`));
+    return wrap;
+  }
+
+  const mainCard = el(`
+    <div class="card">
+      <h3>${L("backupTitle")}</h3>
+      <p class="hint">${L("backupHint")}</p>
+      <button type="button" id="backup-now-btn" class="primary">${L("backupNowBtn")}</button>
+      <div id="backup-now-msg" style="margin-top:8px"></div>
+    </div>
+  `);
+  const nowBtn = mainCard.querySelector("#backup-now-btn");
+  const nowMsg = mainCard.querySelector("#backup-now-msg");
+  wrap.appendChild(mainCard);
+
+  const listCard = el(`
+    <div class="card">
+      <h3>${L("backupListTitle")}</h3>
+      <p class="hint">${L("backupListHint", { n: 20 })}</p>
+      <div id="backup-list-body">${L("loading")}</div>
+    </div>
+  `);
+  wrap.appendChild(listCard);
+  const listBody = listCard.querySelector("#backup-list-body");
+
+  async function authedFetch(path, opts = {}) {
+    const token = await state.user.getIdToken();
+    return fetch(`${ADMIN_SERVER_URL}${path}`, {
+      ...opts,
+      headers: { ...(opts.headers || {}), Authorization: `Bearer ${token}` },
+    });
+  }
+
+  async function loadList() {
+    listBody.textContent = L("loading");
+    try {
+      const res = await authedFetch("/backup/list");
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || res.statusText);
+      listBody.innerHTML = "";
+      if (!body.files.length) { listBody.textContent = L("backupNone"); return; }
+      const table = el(`<div class="q-section-list"></div>`);
+      body.files.forEach((f) => {
+        const created = f.createdTime ? fmtDateTime(new Date(f.createdTime)) : "—";
+        const row = el(`
+          <div class="q-card">
+            <div class="q-head"><span class="tag mono">${created}</span> ${f.size ? `<span class="tag">${fmtFileSize(Number(f.size))}</span>` : ""}</div>
+            <div class="row-actions"></div>
+          </div>
+        `);
+        const actions = row.querySelector(".row-actions");
+        const dlBtn = el(`<button type="button" class="link">${L("backupDownload")}</button>`);
+        dlBtn.onclick = async () => {
+          try {
+            const res2 = await authedFetch(`/backup/download/${f.id}`);
+            if (!res2.ok) throw new Error((await res2.json().catch(() => ({}))).error || res2.statusText);
+            const url = URL.createObjectURL(await res2.blob());
+            const a = document.createElement("a");
+            a.href = url; a.download = f.name; a.click();
+            setTimeout(() => URL.revokeObjectURL(url), 5000);
+          } catch (err) { alert(err.message); }
+        };
+        const restoreBtn = el(`<button type="button" class="link danger">${L("backupRestore")}</button>`);
+        restoreBtn.onclick = async () => {
+          if (!confirm(L("backupRestoreConfirm", { date: created }))) return;
+          if (!confirm(L("backupRestoreConfirm2"))) return;
+          restoreBtn.disabled = true;
+          try {
+            const res2 = await authedFetch(`/backup/restore/${f.id}`, { method: "POST" });
+            const body2 = await res2.json().catch(() => ({}));
+            if (!res2.ok) throw new Error(body2.error || res2.statusText);
+            alert(L("backupRestoreDone"));
+            location.reload();
+          } catch (err) {
+            alert(err.message);
+            restoreBtn.disabled = false;
+          }
+        };
+        actions.appendChild(dlBtn);
+        actions.appendChild(restoreBtn);
+        table.appendChild(row);
+      });
+      listBody.appendChild(table);
+    } catch (err) {
+      listBody.innerHTML = `<p class="err">${L("error")}: ${err.message}</p>`;
+    }
+  }
+
+  nowBtn.onclick = async () => {
+    nowBtn.disabled = true;
+    nowMsg.textContent = L("loading");
+    try {
+      const res = await authedFetch("/backup/run", { method: "POST" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || res.statusText);
+      nowMsg.textContent = L("backupCreated");
+      nowMsg.className = "notice";
+      loadList();
+    } catch (err) {
+      nowMsg.textContent = `${L("error")}: ${err.message}`;
+      nowMsg.className = "err";
+    }
+    nowBtn.disabled = false;
+  };
+  loadList();
+
+  const uploadCard = el(`
+    <div class="card">
+      <h3>${L("backupRestoreFromFileTitle")}</h3>
+      <p class="hint">${L("backupRestoreFromFileHint")}</p>
+      <label>${L("backupChooseFile")}<input type="file" id="backup-file-input" accept="application/json" /></label>
+      <button type="button" id="backup-upload-restore-btn" class="ghost" style="margin-top:8px" disabled>${L("backupRestoreUploadBtn")}</button>
+      <div id="backup-upload-msg" style="margin-top:8px"></div>
+    </div>
+  `);
+  const fileInput = uploadCard.querySelector("#backup-file-input");
+  const uploadRestoreBtn = uploadCard.querySelector("#backup-upload-restore-btn");
+  const uploadMsg = uploadCard.querySelector("#backup-upload-msg");
+  fileInput.onchange = () => { uploadRestoreBtn.disabled = !fileInput.files[0]; };
+  uploadRestoreBtn.onclick = async () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+    if (!confirm(L("backupRestoreConfirm", { date: file.name }))) return;
+    if (!confirm(L("backupRestoreConfirm2"))) return;
+    uploadRestoreBtn.disabled = true;
+    uploadMsg.textContent = L("loading");
+    try {
+      const token = await state.user.getIdToken();
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(`${ADMIN_SERVER_URL}/backup/restore-upload`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: fd,
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || res.statusText);
+      alert(L("backupRestoreDone"));
+      location.reload();
+    } catch (err) {
+      uploadMsg.textContent = `${L("error")}: ${err.message}`;
+      uploadMsg.className = "err";
+      uploadRestoreBtn.disabled = false;
+    }
+  };
+  wrap.appendChild(uploadCard);
+
+  return wrap;
+}
+
 function renderAboutTab() {
   const wrap = el(`<div></div>`);
   const groups = ABOUT_GROUPS[state.lang] || ABOUT_GROUPS.ar;
