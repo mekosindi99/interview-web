@@ -880,6 +880,15 @@ button.primary.backup-run-btn { display: inline-flex; align-items: center; gap: 
 .backup-empty-icon { font-size: 32px; display: block; margin-bottom: 8px; opacity: .6; }
 
 .backup-dropzone {
+  /* <label> is display:inline by default. It wraps block-level children
+     here (the filename <div>), and an inline box containing block children
+     fragments its border across each generated line box instead of drawing
+     one continuous rectangle — with a dashed border that shows up as
+     disconnected bracket-like arcs at the start/end instead of a closed
+     box. display:block (a plain <label> can still wrap a hidden file input
+     and receive its click either way) fixes it by making this one single
+     box the border actually wraps around. */
+  display: block;
   border: 2px dashed var(--border); border-radius: 14px; padding: 18px; text-align: center;
   transition: border-color .15s, background .15s; cursor: pointer;
 }
