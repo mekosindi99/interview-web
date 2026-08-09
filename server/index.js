@@ -10,6 +10,7 @@ import multer from "multer";
 import { google } from "googleapis";
 import { Readable } from "stream";
 import sharp from "sharp";
+import rateLimit from "express-rate-limit";
 
 const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
 if (!serviceAccountJson) {
@@ -84,7 +85,34 @@ app.set("trust proxy", true);
 app.use(cors({ origin: allowedOrigins }));
 app.use(express.json());
 
+// Basic per-IP throttling — this server previously had none at all, which
+// combined with any IDOR/guessable-id bug (see the /audio fileId fix below)
+// meant an attacker could script unlimited attempts with zero friction.
+// Generous limits: this is a small interview-exam site, not a public API —
+// the goal is to blunt scripted abuse, not to rate-limit real usage.
+const uploadLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 100, standardHeaders: true, legacyHeaders: false });
+const fileProxyLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 300, standardHeaders: true, legacyHeaders: false });
+const loginLogLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 60, standardHeaders: true, legacyHeaders: false });
+
 app.get("/", (_req, res) => res.json({ ok: true }));
+
+// Google Drive file ids are always URL-safe [A-Za-z0-9_-], typically 28-44
+// chars. Route params like :fileId reach the Drive API directly — this
+// isn't a defense against SSRF (the Drive SDK isn't a generic URL fetcher),
+// but it rejects garbage/oversized input before it's used anywhere, and
+// narrows what an IDOR-guessing script could even submit.
+function isValidDriveFileId(id) {
+  return typeof id === "string" && /^[A-Za-z0-9_-]{10,100}$/.test(id);
+}
+
+// Non-admin routes (reachable by ordinary candidates) previously echoed
+// err.message straight back to the caller, which can leak internal details
+// from the Google API client (folder ids, quota/project info). Admin-only
+// routes keep full detail since the caller is already trusted staff.
+function sendServerError(res, err, { exposeDetail = false } = {}) {
+  console.error(err);
+  res.status(500).json({ error: exposeDetail ? err.message : "internal error" });
+}
 
 // Rough device-type/browser guess from a User-Agent string — good enough
 // for the admin's "which devices did this candidate log in from" view,
@@ -166,7 +194,7 @@ function requireSelfOrAdmin(paramName) {
 // feature, under users/{uid}/loginDevices/{deviceId}. The client can't lie
 // about its own IP or User-Agent here since both come from the raw HTTP
 // request the server itself received, not anything the client claims.
-app.post("/log-login", requireSignedIn, async (req, res) => {
+app.post("/log-login", loginLogLimiter, requireSignedIn, async (req, res) => {
   try {
     const deviceId = String(req.body?.deviceId || "").slice(0, 200);
     if (!deviceId) return res.status(400).json({ error: "missing deviceId" });
@@ -183,8 +211,7 @@ app.post("/log-login", requireSignedIn, async (req, res) => {
     }, { merge: true });
     res.json({ ok: true });
   } catch (err) {
-    console.error("log-login failed", err);
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err);
   }
 });
 
@@ -201,6 +228,101 @@ function maskPhone(phone) {
   if (digits.length <= 3) return digits;
   return "*".repeat(digits.length - 3) + digits.slice(-3);
 }
+
+const SECTIONS = ["reading", "listening", "speaking", "writing"];
+const POINTS_PER_QUESTION = 2;
+
+// Auto-grades a candidate's exam from the real answer key. This is the fix
+// for two related bugs: (1) the answer key (questions/{qid}.correctAnswer /
+// correctIndex) used to live on the same doc every signed-in candidate can
+// read to take the exam at all — anyone could open devtools and read every
+// correct answer before or during their own exam. Answers now live in the
+// separate questionAnswers/{qid} collection, readable only by staff (see
+// firestore.rules), so the browser flow never has access to them. (2) score
+// used to be computed in the browser and written straight to attempts/{uid}
+// by the candidate's own client — trivial to fake from the console. Grading
+// now happens only here, via the Admin SDK, which bypasses firestore.rules;
+// those rules in turn block a candidate from ever writing autoScore/score/
+// sectionScores/perQuestionCorrect/needsManualGrading/totalPoints on their
+// own attempt, so this is the only path that can set them.
+// Returns the updated attempt fields, or null if the user/attempt doesn't
+// exist. Used both by POST /exam/grade/:uid below (called by the client
+// right after submitExam writes the raw answers) and by /leaderboard/sync
+// as a fallback if that first call never landed (e.g. the admin server was
+// asleep/unreachable at the exact moment the candidate submitted) — without
+// that fallback, an attempt with no autoScore yet would look indistinguishable
+// from "nothing to grade" and get published with a false zero score.
+async function gradeAttempt(uid) {
+  const [userSnap, attemptSnap] = await Promise.all([
+    db.collection("users").doc(uid).get(),
+    db.collection("attempts").doc(uid).get(),
+  ]);
+  if (!userSnap.exists || !attemptSnap.exists) return null;
+  const user = userSnap.data();
+  const attempt = attemptSnap.data();
+  const answers = attempt.answers || {};
+
+  // Same selection the candidate actually took (pinned at exam start — see
+  // startBtn.onclick in app.js), falling back to every active question only
+  // for the same edge case the client already guarded against (a saved
+  // selection whose questions were later deactivated/deleted).
+  const selectedIds = Array.isArray(user.examSelectedQuestionIds) ? user.examSelectedQuestionIds : [];
+  let questionDocs;
+  if (selectedIds.length) {
+    const refs = selectedIds.map((id) => db.collection("questions").doc(id));
+    questionDocs = (await db.getAll(...refs)).filter((d) => d.exists);
+  } else {
+    questionDocs = (await db.collection("questions").where("active", "==", true).get()).docs;
+  }
+  if (!questionDocs.length) return null;
+
+  const answerRefs = questionDocs.map((d) => db.collection("questionAnswers").doc(d.id));
+  const answerDocs = await db.getAll(...answerRefs);
+  const answerKeyById = {};
+  answerDocs.forEach((d) => { if (d.exists) answerKeyById[d.id] = d.data(); });
+
+  let autoScore = 0, totalPoints = 0;
+  const sectionScores = {};
+  SECTIONS.forEach((s) => { sectionScores[s] = { score: 0, total: 0 }; });
+  const perQuestionCorrect = {};
+  let needsManualGrading = false;
+
+  questionDocs.forEach((qDoc) => {
+    const q = qDoc.data();
+    const sec = SECTIONS.includes(q.section) ? q.section : "reading";
+    const pts = q.points || POINTS_PER_QUESTION;
+    totalPoints += pts;
+    sectionScores[sec].total += pts;
+    if (q.type === "speaking" || q.type === "writing") {
+      needsManualGrading = true;
+      return;
+    }
+    const key = answerKeyById[qDoc.id] || {};
+    const correct = q.type === "truefalse" ? key.correctAnswer : key.correctIndex;
+    const given = answers[qDoc.id];
+    const isCorrect = given !== undefined && given === correct;
+    perQuestionCorrect[qDoc.id] = isCorrect;
+    if (isCorrect) { autoScore += pts; sectionScores[sec].score += pts; }
+  });
+
+  const update = {
+    autoScore, totalPoints, sectionScores, perQuestionCorrect, needsManualGrading,
+    score: autoScore + (attempt.manualScore || 0),
+  };
+  await db.collection("attempts").doc(uid).update(update);
+  return { ...attempt, ...update };
+}
+
+app.post("/exam/grade/:uid", requireSelfOrAdmin("uid"), async (req, res) => {
+  try {
+    const graded = await gradeAttempt(req.params.uid);
+    if (!graded) return res.status(404).json({ error: "not found" });
+    const { autoScore, totalPoints, sectionScores, needsManualGrading } = graded;
+    res.json({ ok: true, autoScore, totalPoints, sectionScores, needsManualGrading });
+  } catch (err) {
+    sendServerError(res, err);
+  }
+});
 
 // Publishes (or removes) one candidate's public leaderboard entry — called
 // right after the admin saves manual grading, OR by a candidate for their
@@ -228,6 +350,17 @@ app.post("/leaderboard/sync/:uid", requireSelfOrAdmin("uid"), async (req, res) =
       return res.json({ ok: true, published: false, reason: "deleted" });
     }
     let attempt = attemptSnap.data();
+    // Auto-grading normally already ran (POST /exam/grade/:uid, called by
+    // the client right after submit) by the time anything calls sync — but
+    // if that call never landed (e.g. the admin server was briefly asleep
+    // right when the candidate submitted), autoScore/needsManualGrading
+    // would still be completely unset here, which is indistinguishable from
+    // "nothing to grade" below and would publish a false zero score. Grade
+    // it now instead, same as if the client's own call had succeeded.
+    if (attempt.autoScore === undefined && attempt.examStatus !== "graded") {
+      const graded = await gradeAttempt(uid).catch(() => null);
+      if (graded) attempt = graded;
+    }
     // Self-heals a now-fixed bug where an exam with no manual questions
     // could get stuck at examStatus "submitted" forever (there was no
     // grading form for an admin to ever save, so nothing could move it to
@@ -266,8 +399,7 @@ app.post("/leaderboard/sync/:uid", requireSelfOrAdmin("uid"), async (req, res) =
     });
     res.json({ ok: true, published: true });
   } catch (err) {
-    console.error("leaderboard sync failed", err);
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err);
   }
 });
 
@@ -283,8 +415,7 @@ app.delete("/leaderboard/:uid", requireAdmin, async (req, res) => {
     await db.collection("leaderboard").doc(req.params.uid).delete();
     res.json({ ok: true });
   } catch (err) {
-    console.error("leaderboard entry delete failed", err);
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err, { exposeDetail: true });
   }
 });
 
@@ -309,8 +440,7 @@ app.post("/leaderboard/prune", requireAdmin, async (req, res) => {
     }
     res.json({ ok: true, removed: removed.length, scanned: snap.size });
   } catch (err) {
-    console.error("leaderboard prune failed", err);
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err, { exposeDetail: true });
   }
 });
 
@@ -320,7 +450,7 @@ app.post("/leaderboard/prune", requireAdmin, async (req, res) => {
 // Candidate's own voice — the most sensitive file this app ever stores, so
 // it stays PRIVATE on Drive; playback only ever goes through the
 // authenticated GET /audio/:fileId proxy below, never a public Drive link.
-app.post("/uploads/speaking/:qid", requireSignedIn, upload.single("file"), async (req, res) => {
+app.post("/uploads/speaking/:qid", uploadLimiter, requireSignedIn, upload.single("file"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "no file" });
     const fileId = await uploadToDrive({
@@ -329,8 +459,7 @@ app.post("/uploads/speaking/:qid", requireSignedIn, upload.single("file"), async
     });
     res.json({ fileId });
   } catch (err) {
-    console.error("speaking upload failed", err);
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err);
   }
 });
 
@@ -338,7 +467,7 @@ app.post("/uploads/speaking/:qid", requireSignedIn, upload.single("file"), async
 // intake form (age/education/marital status/tribe/work history/CV — see
 // app.js's renderProfileIntakeForm). Private on Drive like the speaking
 // recordings; only reachable through GET /cv/:fileId below.
-app.post("/uploads/cv", requireSignedIn, upload.single("file"), async (req, res) => {
+app.post("/uploads/cv", uploadLimiter, requireSignedIn, upload.single("file"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "no file" });
     const fileId = await uploadToDrive({
@@ -347,8 +476,7 @@ app.post("/uploads/cv", requireSignedIn, upload.single("file"), async (req, res)
     });
     res.json({ fileId });
   } catch (err) {
-    console.error("cv upload failed", err);
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err);
   }
 });
 
@@ -363,7 +491,7 @@ app.post("/uploads/cv", requireSignedIn, upload.single("file"), async (req, res)
 // uses), which fetches the real bytes server-side and sets the correct
 // Content-Type — reliable regardless of what Drive's direct-link endpoint
 // does on a given request.
-app.post("/uploads/listening", requireAdmin, upload.single("file"), async (req, res) => {
+app.post("/uploads/listening", uploadLimiter, requireAdmin, upload.single("file"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "no file" });
     const fileId = await uploadToDrive({
@@ -372,8 +500,7 @@ app.post("/uploads/listening", requireAdmin, upload.single("file"), async (req, 
     });
     res.json({ fileId });
   } catch (err) {
-    console.error("listening upload failed", err);
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err, { exposeDetail: true });
   }
 });
 
@@ -381,7 +508,7 @@ app.post("/uploads/listening", requireAdmin, upload.single("file"), async (req, 
 // reads it back through GET /material/:fileId below (both because pdf.js
 // needs a CORS-enabled response Drive's own download URL doesn't send, and
 // so an un-watermarked copy is never reachable without being signed in).
-app.post("/uploads/material", requireAdmin, upload.single("file"), async (req, res) => {
+app.post("/uploads/material", uploadLimiter, requireAdmin, upload.single("file"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "no file" });
     const fileId = await uploadToDrive({
@@ -390,8 +517,7 @@ app.post("/uploads/material", requireAdmin, upload.single("file"), async (req, r
     });
     res.json({ fileId, fileName: req.file.originalname });
   } catch (err) {
-    console.error("material upload failed", err);
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err, { exposeDetail: true });
   }
 });
 
@@ -401,7 +527,7 @@ app.post("/uploads/material", requireAdmin, upload.single("file"), async (req, r
 // determined by req.files' array order, which multer preserves from the
 // order the client appended them to the FormData — the client is
 // responsible for sorting before upload, this just doesn't re-shuffle it.
-app.post("/uploads/material-images", requireAdmin, upload.array("files", 200), async (req, res) => {
+app.post("/uploads/material-images", uploadLimiter, requireAdmin, upload.array("files", 200), async (req, res) => {
   try {
     if (!req.files?.length) return res.status(400).json({ error: "no files" });
     const results = await Promise.all(req.files.map(async (file, i) => {
@@ -426,8 +552,7 @@ app.post("/uploads/material-images", requireAdmin, upload.array("files", 200), a
     }));
     res.json({ images: results });
   } catch (err) {
-    console.error("material images upload failed", err);
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err, { exposeDetail: true });
   }
 });
 
@@ -460,8 +585,7 @@ app.delete("/material-images", requireAdmin, async (req, res) => {
     const failed = fileIds.filter((_, i) => results[i] === "failed");
     res.json({ ok: true, deleted: results.filter((r) => r === "deleted").length, trashed: results.filter((r) => r === "trashed").length, failed });
   } catch (err) {
-    console.error("material images delete failed", err);
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err, { exposeDetail: true });
   }
 });
 
@@ -508,8 +632,9 @@ app.get("/oauth/callback", async (req, res) => {
 // fileId could fetch the raw, un-watermarked PDF directly by URL, bypassing
 // the app (and the watermark, which is only ever drawn client-side onto
 // the canvas, never baked into the file itself).
-app.get("/material/:fileId", requireSignedIn, async (req, res) => {
+app.get("/material/:fileId", fileProxyLimiter, requireSignedIn, async (req, res) => {
   try {
+    if (!isValidDriveFileId(req.params.fileId)) return res.status(400).json({ error: "invalid file id" });
     // Size + the actual media stream are independent Drive API calls — they
     // were awaited one after another, so every request paid for both round
     // trips back-to-back. Firing them together roughly halves this route's
@@ -523,8 +648,7 @@ app.get("/material/:fileId", requireSignedIn, async (req, res) => {
     res.setHeader("Cache-Control", "private, max-age=31536000, immutable");
     driveRes.data.pipe(res);
   } catch (err) {
-    console.error("material proxy failed", err);
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err);
   }
 });
 
@@ -554,8 +678,9 @@ function cacheImage(fileId, buffer) {
 // Same idea as the PDF proxy above, for a single material-page image —
 // authenticated (not a public Drive URL) so images stay behind a login,
 // same as the PDF and everything else here.
-app.get("/material-image/:fileId", requireSignedIn, async (req, res) => {
+app.get("/material-image/:fileId", fileProxyLimiter, requireSignedIn, async (req, res) => {
   try {
+    if (!isValidDriveFileId(req.params.fileId)) return res.status(400).json({ error: "invalid file id" });
     const cached = imageCache.get(req.params.fileId);
     if (cached) {
       res.setHeader("Content-Type", "image/jpeg");
@@ -582,8 +707,7 @@ app.get("/material-image/:fileId", requireSignedIn, async (req, res) => {
     res.setHeader("Cache-Control", "private, max-age=31536000, immutable");
     driveRes.data.pipe(res);
   } catch (err) {
-    console.error("material image proxy failed", err);
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err);
   }
 });
 
@@ -591,19 +715,39 @@ app.get("/material-image/:fileId", requireSignedIn, async (req, res) => {
 // grading it, or the candidate reviewing their own before submit). Same
 // pattern as the material proxies above: the file itself is never public on
 // Drive, only reachable through here.
-app.get("/audio/:fileId", requireSignedIn, async (req, res) => {
+//
+// FIX: this used to only check requireSignedIn (any authenticated account),
+// with no check that the recording actually belonged to the caller — the
+// same class of bug /cv/:fileId below was explicitly patched for. Any
+// signed-in candidate who obtained/guessed another candidate's fileId could
+// listen to their private recording. Speaking recordings are named
+// speaking__{uid}__{qid}.webm (see /uploads/speaking/:qid above), which is
+// the only record of who a given fileId belongs to — ownership is checked
+// by parsing that back out of the Drive filename, same idea as the
+// profileExtra.cvFileId lookup /cv/:fileId uses. Fails closed: a name that
+// doesn't match the expected pattern denies non-staff instead of guessing.
+app.get("/audio/:fileId", fileProxyLimiter, requireSignedIn, async (req, res) => {
   try {
-    const meta = await drive.files.get({ fileId: req.params.fileId, fields: "size,mimeType" });
+    const { fileId } = req.params;
+    if (!isValidDriveFileId(fileId)) return res.status(400).json({ error: "invalid file id" });
+    const meta = await drive.files.get({ fileId, fields: "size,mimeType,name" });
+    const parts = (meta.data.name || "").split("__");
+    const ownerUid = parts[0] === "speaking" && parts.length >= 3 ? parts[1] : null;
+    if (!ownerUid) return res.status(403).json({ error: "forbidden" });
+    if (ownerUid !== req.uid) {
+      const callerSnap = await db.collection("users").doc(req.uid).get();
+      const isStaff = callerSnap.exists && ["admin", "coadmin"].includes(callerSnap.data().role);
+      if (!isStaff) return res.status(403).json({ error: "forbidden" });
+    }
     const driveRes = await drive.files.get(
-      { fileId: req.params.fileId, alt: "media" },
+      { fileId, alt: "media" },
       { responseType: "stream" }
     );
     res.setHeader("Content-Type", meta.data.mimeType || "audio/webm");
     if (meta.data.size) res.setHeader("Content-Length", meta.data.size);
     driveRes.data.pipe(res);
   } catch (err) {
-    console.error("audio proxy failed", err);
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err);
   }
 });
 
@@ -616,9 +760,10 @@ app.get("/audio/:fileId", requireSignedIn, async (req, res) => {
 // candidate's fileId (Drive's own file id, not derived from anything a
 // client is expected to guess, but still not a real access control) could
 // read their private CV straight from this route.
-app.get("/cv/:fileId", requireSignedIn, async (req, res) => {
+app.get("/cv/:fileId", fileProxyLimiter, requireSignedIn, async (req, res) => {
   try {
     const { fileId } = req.params;
+    if (!isValidDriveFileId(fileId)) return res.status(400).json({ error: "invalid file id" });
     const callerSnap = await db.collection("users").doc(req.uid).get();
     const isStaff = callerSnap.exists && ["admin", "coadmin"].includes(callerSnap.data().role);
     if (!isStaff) {
@@ -636,8 +781,7 @@ app.get("/cv/:fileId", requireSignedIn, async (req, res) => {
     if (meta.data.size) res.setHeader("Content-Length", meta.data.size);
     driveRes.data.pipe(res);
   } catch (err) {
-    console.error("cv proxy failed", err);
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err);
   }
 });
 
@@ -694,8 +838,7 @@ app.post("/drive/revoke-public", requireAdmin, async (req, res) => {
     } while (pageToken);
     res.json({ ok: true, folderFixed, checked, revoked, skipped });
   } catch (err) {
-    console.error("revoke-public failed", err);
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err, { exposeDetail: true });
   }
 });
 
@@ -708,8 +851,7 @@ app.delete("/material/:fileId", requireAdmin, async (req, res) => {
     const result = await deleteOrTrashFile(req.params.fileId);
     res.json({ ok: result !== "failed", result });
   } catch (err) {
-    console.error("material delete failed", err);
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err, { exposeDetail: true });
   }
 });
 
@@ -763,8 +905,7 @@ app.post("/drive/purge-orphans", requireAdmin, async (req, res) => {
     }
     res.json({ ok: true, applied: true, checked: orphans.length, trashed, failed });
   } catch (err) {
-    console.error("purge-orphans failed", err);
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err, { exposeDetail: true });
   }
 });
 
@@ -777,8 +918,7 @@ app.post("/drive/restore/:fileId", requireAdmin, async (req, res) => {
     await drive.files.update({ fileId: req.params.fileId, requestBody: { trashed: false } });
     res.json({ ok: true });
   } catch (err) {
-    console.error("restore failed", err);
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err, { exposeDetail: true });
   }
 });
 
@@ -807,8 +947,7 @@ app.delete("/users/:uid", requireAdmin, async (req, res) => {
     await db.collection("leaderboard").doc(uid).delete().catch(() => {});
     res.json({ ok: true });
   } catch (err) {
-    console.error("delete-user failed", err);
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err, { exposeDetail: true });
   }
 });
 
@@ -831,8 +970,7 @@ app.delete("/by-phone/:phone", requireAdmin, async (req, res) => {
     await db.collection("attempts").doc(uid).delete().catch(() => {});
     res.json({ ok: true, uid });
   } catch (err) {
-    console.error("delete-by-phone failed", err);
-    res.status(500).json({ error: err.message });
+    sendServerError(res, err, { exposeDetail: true });
   }
 });
 

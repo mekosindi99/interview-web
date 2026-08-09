@@ -20,11 +20,24 @@ service cloud.firestore {
     match /users/{uid} {
       allow read: if isSignedIn() && (request.auth.uid == uid || isStaff());
       // Candidates may only update their own exam-progress fields, never role/blocked/deleted/score.
+      // examSectionDeadline is client-writable (advancing sections locally
+      // needs it) but capped to at most 8h ahead of Firestore's own request
+      // time — without this a candidate could set it to any arbitrary future
+      // timestamp from the console and get unlimited section time. Not a
+      // full server-authoritative timer (a candidate can still repeatedly
+      // renew it up to the cap before it expires), but it closes the
+      // "set it to year 3000 once" version of the bug. 8h is deliberately
+      // generous — the admin's section-length field (renderExamConfigForm in
+      // app.js) has no enforced upper bound, so the cap only needs to sit
+      // safely above any realistic configured section length, not match it
+      // exactly.
       allow update: if isSignedIn() && request.auth.uid == uid
         && request.resource.data.role == resource.data.role
         && request.resource.data.blocked == resource.data.blocked
         && request.resource.data.deleted == resource.data.deleted
-        && !("score" in request.resource.data.diff(resource.data).affectedKeys());
+        && !("score" in request.resource.data.diff(resource.data).affectedKeys())
+        && (!("examSectionDeadline" in request.resource.data.diff(resource.data).affectedKeys())
+            || request.resource.data.examSectionDeadline <= request.time.toMillis() + 28800000);
       allow update, delete: if isAdmin();
       // Unlike every other update rule here, this one carried NO constraint
       // on the new data — only on the target doc's role beforehand. A
@@ -53,22 +66,48 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // The actual answer key (correctAnswer/correctIndex), split out of
+    // questions/{qid} into its own doc so a candidate — who must be able to
+    // read questions/{qid} to take the exam at all — can never read the
+    // correct answer for a question before (or during) their own attempt.
+    // Staff can read it (question-bank editing, admin grading views);
+    // grading itself is done by the admin server via the Admin SDK, which
+    // bypasses this rule entirely.
+    match /questionAnswers/{qid} {
+      allow read: if isStaff();
+      allow write: if isAdmin();
+    }
+
     match /attempts/{uid} {
       allow read: if isSignedIn() && (request.auth.uid == uid || isStaff());
-      // Candidates submit their own attempt (auto-graded reading/listening
-      // fields included) but can never set manual-grading fields or mark
-      // themselves "graded" — that's staff-only, done from the admin grading
-      // panel (see renderCandidateResultPanel in app.js).
+      // Candidates submit their own attempt (raw answers only) but can never
+      // set manual-grading fields, mark themselves "graded", or write their
+      // own score — auto-grading now happens server-side (see
+      // POST /exam/grade/:uid in server/index.js, which reads the real
+      // answer key from questionAnswers/{qid} — a collection candidates
+      // cannot read — and writes autoScore/sectionScores/perQuestionCorrect/
+      // needsManualGrading via the Admin SDK, bypassing these rules
+      // entirely). Without this block a candidate could otherwise call
+      // setDoc/updateDoc on their own attempt straight from the console and
+      // hand themselves an arbitrary score.
       allow create: if isSignedIn() && request.auth.uid == uid
         && request.resource.data.examStatus != 'graded'
         && !('manualScores' in request.resource.data)
         && !('gradedBy' in request.resource.data)
-        && !('gradedAt' in request.resource.data);
+        && !('gradedAt' in request.resource.data)
+        && !('autoScore' in request.resource.data)
+        && !('score' in request.resource.data)
+        && !('sectionScores' in request.resource.data)
+        && !('perQuestionCorrect' in request.resource.data)
+        && !('needsManualGrading' in request.resource.data)
+        && !('totalPoints' in request.resource.data);
       allow update: if isSignedIn() && request.auth.uid == uid
         && resource.data.examStatus != 'graded'
         && request.resource.data.examStatus != 'graded'
         && !request.resource.data.diff(resource.data).affectedKeys()
-              .hasAny(['manualScores', 'manualScore', 'gradedBy', 'gradedAt']);
+              .hasAny(['manualScores', 'manualScore', 'gradedBy', 'gradedAt',
+                       'autoScore', 'score', 'sectionScores', 'perQuestionCorrect',
+                       'needsManualGrading', 'totalPoints']);
       allow update: if isStaff();
       // Admin-only, and only to reset a candidate for a retake — the
       // attempt is archived into pastAttempts (below) by the client before

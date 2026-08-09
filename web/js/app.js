@@ -411,6 +411,7 @@ onAuthStateChanged(auth, async (user) => {
     logLoginDevice(user);
     watchCandidates();
     watchQuestions();
+    watchQuestionAnswers();
     watchAttempts();
     watchExamConfig();
   } else {
@@ -451,6 +452,21 @@ function watchQuestions() {
   });
 }
 
+let unsubQuestionAnswers = null;
+// Staff-only: the actual answer key, split out of questions/{qid} into its
+// own collection (see firestore.rules) so a candidate reading questions to
+// take the exam never has access to it. Merged into state.questions'
+// section grouping below, purely for the admin question-bank list/edit form
+// — grading itself happens server-side (POST /exam/grade/:uid), not here.
+function watchQuestionAnswers() {
+  if (unsubQuestionAnswers) return;
+  unsubQuestionAnswers = onSnapshot(collection(db, "questionAnswers"), (snap) => {
+    const map = {};
+    snap.forEach((d) => { map[d.id] = d.data(); });
+    setState({ questionAnswers: map });
+  });
+}
+
 let unsubAttempts = null;
 function watchAttempts() {
   if (unsubAttempts) return;
@@ -462,6 +478,7 @@ function watchAttempts() {
 }
 
 function stopStaffWatchers() {
+  if (unsubQuestionAnswers) { unsubQuestionAnswers(); unsubQuestionAnswers = null; }
   if (unsubCandidates) { unsubCandidates(); unsubCandidates = null; }
   if (unsubQuestions) { unsubQuestions(); unsubQuestions = null; }
   if (unsubAttempts) { unsubAttempts(); unsubAttempts = null; }
@@ -1909,10 +1926,12 @@ function renderCandidateResultPanel(c) {
       body.appendChild(grid);
     }
 
+    // Right/wrong per question comes from perQuestionCorrect, computed
+    // server-side at grading time (POST /exam/grade/:uid) — the client no
+    // longer has (or needs) the raw answer key to work this out itself.
+    const perQuestionCorrect = a.perQuestionCorrect || {};
     state.questions.filter((q) => q.id in answers).forEach((q, i) => {
-      const given = answers[q.id];
-      const correct = q.type === "truefalse" ? q.correctAnswer : q.correctIndex;
-      const isRight = given === correct;
+      const isRight = !!perQuestionCorrect[q.id];
       const row = el(`<div class="review-row ${isRight ? "ok" : "bad"}"><b>${i + 1}.</b> ${escapeHtml(q.text[state.lang] || q.text.ar)}</div>`);
       body.appendChild(row);
     });
@@ -2627,13 +2646,22 @@ function renderQuestionsTab() {
           // Stable, content-derived id (not a random addDoc id) so clicking
           // this button again re-writes the same docs instead of inserting
           // duplicates every time.
-          // { ...q, points: ... } last: questions.js's sample data still
-          // carries its own points value (1), which would otherwise win over
-          // the spread and reintroduce a non-2 question every time this
+          const { correctAnswer, correctIndex, ...publicFields } = q;
+          const id = seedDocId(q);
+          // { ...publicFields, points: ... } last: questions.js's sample data
+          // still carries its own points value (1), which would otherwise win
+          // over the spread and reintroduce a non-2 question every time this
           // button is used.
-          await setDoc(doc(db, "questions", seedDocId(q)),
-            { section: "reading", ...q, points: POINTS_PER_QUESTION, active: true, createdAt: serverTimestamp() },
+          await setDoc(doc(db, "questions", id),
+            { section: "reading", ...publicFields, points: POINTS_PER_QUESTION, active: true, createdAt: serverTimestamp() },
             { merge: true });
+          // Answer key split into its own staff-only doc — see the comment
+          // on renderQuestionForm's submit handler for why.
+          if (correctAnswer !== undefined || correctIndex !== undefined) {
+            await setDoc(doc(db, "questionAnswers", id),
+              { ...(correctAnswer !== undefined ? { correctAnswer } : {}), ...(correctIndex !== undefined ? { correctIndex } : {}) },
+              { merge: true });
+          }
         }
         alert(L("seeded"));
       } finally {
@@ -2661,7 +2689,10 @@ function renderQuestionsTab() {
       if (!confirm(L("removeDuplicatesConfirm", { n: toDelete.length }))) return;
       dedupeBtn.disabled = true;
       try {
-        for (const q of toDelete) await deleteDoc(doc(db, "questions", q.id));
+        for (const q of toDelete) {
+          await deleteDoc(doc(db, "questions", q.id));
+          await deleteDoc(doc(db, "questionAnswers", q.id)).catch(() => {});
+        }
         alert(L("duplicatesRemoved", { n: toDelete.length }));
       } finally {
         dedupeBtn.disabled = false;
@@ -2705,7 +2736,15 @@ function renderQuestionsTab() {
   const openMap = state.qSectionsOpen || (state.qSectionsOpen = {});
   const bySection = {};
   SECTIONS.forEach((s) => { bySection[s] = []; });
-  state.questions.forEach((q) => { (bySection[q.section] || bySection.reading).push(q); });
+  // The answer key lives in a separate staff-only collection now (see
+  // firestore.rules) — merged back in here purely for this admin-facing
+  // list/edit form, which is the only client-side code that still needs to
+  // see a raw correctAnswer/correctIndex at all.
+  const qAnswers = state.questionAnswers || {};
+  state.questions.forEach((q) => {
+    const merged = { ...q, ...qAnswers[q.id] };
+    (bySection[merged.section] || bySection.reading).push(merged);
+  });
 
   const list = el(`<div class="q-section-list"></div>`);
   if (!state.questions.length) list.appendChild(el(`<p>${L("noQuestions")}</p>`));
@@ -2750,7 +2789,11 @@ function renderQuestionsTab() {
         const toggleBtn = el(`<button class="link">${q.active === false ? L("active") : L("inactive")}</button>`);
         toggleBtn.onclick = () => updateDoc(doc(db, "questions", q.id), { active: q.active === false });
         const delBtn = el(`<button class="link danger">${L("delete")}</button>`);
-        delBtn.onclick = () => { if (confirm(L("delete") + "?")) deleteDoc(doc(db, "questions", q.id)); };
+        delBtn.onclick = () => {
+          if (!confirm(L("delete") + "?")) return;
+          deleteDoc(doc(db, "questions", q.id));
+          deleteDoc(doc(db, "questionAnswers", q.id)).catch(() => {});
+        };
         actions.appendChild(editBtn);
         actions.appendChild(toggleBtn);
         actions.appendChild(delBtn);
@@ -2972,6 +3015,15 @@ function renderQuestionForm(existing) {
       text: { ar: f.get("text_ar") },
     };
     if (!existing) { data.active = true; data.createdAt = serverTimestamp(); }
+    // The correct answer never goes into `data` (the questions/{qid} doc) —
+    // that doc is readable by every signed-in candidate to take the exam at
+    // all, so storing the answer key there let anyone read every correct
+    // answer straight out of devtools before (or during) their own exam.
+    // It's written separately below to questionAnswers/{qid}, a collection
+    // only staff can read (see firestore.rules) — grading itself happens
+    // server-side (see POST /exam/grade/:uid in server/index.js), which is
+    // the only thing that ever needs to read it back.
+    let answerData = null;
     if (type === "mcq" || type === "image") {
       const options = [0,1,2,3].map((i) => ({ ar: f.get(`opt_ar_${i}`) || "" }));
       const correctIndex = Number(f.get("correctIndex"));
@@ -2986,10 +3038,10 @@ function renderQuestionForm(existing) {
         [order[i], order[j]] = [order[j], order[i]];
       }
       data.options = order.map((i) => options[i]);
-      data.correctIndex = order.indexOf(correctIndex);
+      answerData = { correctIndex: order.indexOf(correctIndex) };
       if (type === "image") data.imagePath = f.get("imagePath");
     } else if (type === "truefalse") {
-      data.correctAnswer = f.get("correctAnswer") === "true";
+      answerData = { correctAnswer: f.get("correctAnswer") === "true" };
     }
     if (data.section === "reading" && (type === "mcq" || type === "truefalse" || type === "image")) {
       const pAr = f.get("passage_ar");
@@ -2999,8 +3051,10 @@ function renderQuestionForm(existing) {
     try {
       if (existing) {
         await updateDoc(doc(db, "questions", existing.id), data);
+        if (answerData) await setDoc(doc(db, "questionAnswers", existing.id), answerData);
       } else {
-        await addDoc(collection(db, "questions"), data);
+        const ref = await addDoc(collection(db, "questions"), data);
+        if (answerData) await setDoc(doc(db, "questionAnswers", ref.id), answerData);
         e.target.reset();
         pendingAudioFileId = "";
         renderExtra();
@@ -3486,29 +3540,19 @@ async function loadQuestionsForCandidate() {
 
 async function submitExam(activeQs) {
   stopExamTimer();
-  let autoScore = 0, totalPoints = 0;
-  const manualQuestions = [];
-  // Per-section breakdown (reading/listening/speaking/writing) so the
-  // result screen can show each section's score, not just one grand total.
-  const sectionScores = {};
-  SECTIONS.forEach((s) => { sectionScores[s] = { score: 0, total: 0 }; });
-  activeQs.forEach((q) => {
-    const sec = q.section || "reading";
-    const pts = q.points || POINTS_PER_QUESTION;
-    totalPoints += pts;
-    sectionScores[sec].total += pts;
-    if (q.type === "speaking" || q.type === "writing") {
-      manualQuestions.push(q.id);
-      return;
-    }
-    const given = examLocalAnswers[q.id];
-    const correct = q.type === "truefalse" ? q.correctAnswer : q.correctIndex;
-    if (given === correct) { autoScore += pts; sectionScores[sec].score += pts; }
-  });
-  const hasManual = manualQuestions.length > 0;
   // Recorded so staff can see it — deliberately not fed into the score
   // itself (see candidate table below), just shown alongside it.
   const durationSec = examStartedAtMs ? Math.max(0, Math.round((Date.now() - examStartedAtMs) / 1000)) : null;
+  // Only the raw answers are written by the candidate's own client — never
+  // a score. autoScore/sectionScores/perQuestionCorrect/needsManualGrading/
+  // totalPoints are computed and written server-side right below, from the
+  // real answer key (questionAnswers/{qid}) the browser never has access
+  // to; firestore.rules blocks a candidate from setting any of those fields
+  // themselves, so this used to be silently trusting whatever the client
+  // computed here — this function used to compute the same numbers locally
+  // and write them directly, which meant a candidate could set an arbitrary
+  // score on their own attempt straight from the browser console.
+  //
   // Always "submitted", never "graded" — firestore.rules deliberately
   // forbids a candidate from ever writing examStatus 'graded' on their own
   // attempt, so writing it here made submitExam fail outright with
@@ -3516,19 +3560,33 @@ async function submitExam(activeQs) {
   // every reading-only exam): the attempt never saved, the exam never
   // ended, and the candidate was stuck on the last question forever.
   // Promotion to "graded" for an exam with nothing left to grade is the
-  // admin server's job — /leaderboard/sync/:uid (called just below when
-  // !hasManual) does exactly that via the Admin SDK, which bypasses rules,
-  // and derives the score from this doc rather than trusting the client.
+  // admin server's job — /leaderboard/sync/:uid does exactly that via the
+  // Admin SDK, which bypasses rules, and derives the score from this doc
+  // rather than trusting the client.
   await setDoc(doc(db, "attempts", state.profile.id), {
     answers: examLocalAnswers,
     manualAnswers: examManualAnswers,
-    autoScore, manualScore: 0, totalPoints, sectionScores,
-    score: autoScore,
+    manualScore: 0,
     examStatus: "submitted",
-    needsManualGrading: hasManual,
     submittedAt: serverTimestamp(),
     durationSec,
   });
+  // Best-effort: if the admin server is briefly unreachable, the attempt is
+  // still safely saved as "submitted" with no score yet — server/index.js's
+  // /leaderboard/sync/:uid re-runs this same grading itself as a fallback
+  // the next time anyone (staff publishing, or this candidate) triggers a
+  // sync, so nothing about the exam itself is lost.
+  if (ADMIN_SERVER_URL) {
+    try {
+      const token = await state.user.getIdToken();
+      await fetch(`${ADMIN_SERVER_URL}/exam/grade/${state.profile.id}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch (err) {
+      console.error("exam grading failed", err);
+    }
+  }
   // Note: score fields intentionally live only on the attempts doc —
   // candidates can't write "score" on their own users doc (see firestore.rules).
   await updateDoc(doc(db, "users", state.profile.id), { examStatus: "submitted" });
@@ -3819,15 +3877,16 @@ function renderResult() {
     const manualAnswers = a.manualAnswers || {};
     const manualScores = a.manualScores || {};
 
-    // Auto-graded (reading/listening): right/wrong per question, same
-    // right-answer logic used to score at submit time.
+    // Auto-graded (reading/listening): right/wrong per question, from
+    // perQuestionCorrect — computed server-side at grading time (POST
+    // /exam/grade/:uid), since the answer key itself never reaches the
+    // candidate's browser (see firestore.rules' questionAnswers collection).
+    const perQuestionCorrect = a.perQuestionCorrect || {};
     const autoQs = state.questions.filter((q) => q.id in answers);
     if (autoQs.length) {
       const card = el(`<div class="card"><h3>${L("autoScore")}</h3></div>`);
       autoQs.forEach((q, i) => {
-        const given = answers[q.id];
-        const correct = q.type === "truefalse" ? q.correctAnswer : q.correctIndex;
-        const isRight = given === correct;
+        const isRight = !!perQuestionCorrect[q.id];
         card.appendChild(el(`
           <div class="review-row ${isRight ? "ok" : "bad"}">
             <b>${i + 1}.</b> ${escapeHtml(q.text.ar)}
