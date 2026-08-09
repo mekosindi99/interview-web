@@ -186,6 +186,19 @@ function fmtDateTime(date) {
   return `${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+// "قبل 5 دقائق" from a plain epoch-ms timestamp — same phrasing/keys as
+// fmtLastSeen (candidate presence) but generic, no candidate object needed.
+function fmtAgo(ms) {
+  const diffSec = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  if (diffSec < 60) return L("lastSeenSecondsAgo", { n: diffSec });
+  const diffMin = Math.round(diffSec / 60);
+  if (diffMin < 60) return L("lastSeenMinutesAgo", { n: diffMin });
+  const diffHr = Math.round(diffMin / 60);
+  if (diffHr < 24) return L("lastSeenHoursAgo", { n: diffHr });
+  const diffDay = Math.round(diffHr / 24);
+  return L("lastSeenDaysAgo", { n: diffDay });
+}
+
 // A small "uploaded file" card (icon + name + size/date meta line) —
 // the polished-app style the admin asked for, instead of a bare filename.
 // Candidate's own login credentials (name/phone/password), laid out as
@@ -2626,28 +2639,6 @@ function renderBackupTab() {
     return wrap;
   }
 
-  const mainCard = el(`
-    <div class="card">
-      <h3>${L("backupTitle")}</h3>
-      <p class="hint">${L("backupHint")}</p>
-      <button type="button" id="backup-now-btn" class="primary">${L("backupNowBtn")}</button>
-      <div id="backup-now-msg" style="margin-top:8px"></div>
-    </div>
-  `);
-  const nowBtn = mainCard.querySelector("#backup-now-btn");
-  const nowMsg = mainCard.querySelector("#backup-now-msg");
-  wrap.appendChild(mainCard);
-
-  const listCard = el(`
-    <div class="card">
-      <h3>${L("backupListTitle")}</h3>
-      <p class="hint">${L("backupListHint", { n: 20 })}</p>
-      <div id="backup-list-body">${L("loading")}</div>
-    </div>
-  `);
-  wrap.appendChild(listCard);
-  const listBody = listCard.querySelector("#backup-list-body");
-
   async function authedFetch(path, opts = {}) {
     const token = await state.user.getIdToken();
     return fetch(`${ADMIN_SERVER_URL}${path}`, {
@@ -2656,25 +2647,85 @@ function renderBackupTab() {
     });
   }
 
+  // ---- Hero card: icon, description, stat tiles, the run-now button ----
+  const heroCard = el(`
+    <div class="card">
+      <div class="backup-hero">
+        <div class="backup-hero-icon">💾</div>
+        <div class="backup-hero-text">
+          <h3>${L("backupTitle")}</h3>
+          <p class="hint">${L("backupHint")}</p>
+        </div>
+      </div>
+      <div class="backup-stats" id="backup-stats"></div>
+      <div class="backup-actions-row">
+        <button type="button" id="backup-now-btn" class="primary backup-run-btn">
+          <span class="action-chip-icon">⚡</span><span id="backup-now-label">${L("backupNowBtn")}</span>
+        </button>
+        <span id="backup-now-msg"></span>
+      </div>
+    </div>
+  `);
+  const statsHost = heroCard.querySelector("#backup-stats");
+  const nowBtn = heroCard.querySelector("#backup-now-btn");
+  const nowLabel = heroCard.querySelector("#backup-now-label");
+  const nowMsg = heroCard.querySelector("#backup-now-msg");
+  wrap.appendChild(heroCard);
+
+  // ---- List card ----
+  const listCard = el(`
+    <div class="card">
+      <h3>${L("backupListTitle")}</h3>
+      <p class="hint">${L("backupListHint", { n: 20 })}</p>
+      <div id="backup-list-body"></div>
+    </div>
+  `);
+  wrap.appendChild(listCard);
+  const listBody = listCard.querySelector("#backup-list-body");
+
+  function renderStats(files) {
+    const totalBytes = files.reduce((sum, f) => sum + (Number(f.size) || 0), 0);
+    const lastAgo = files.length ? fmtAgo(new Date(files[0].createdTime).getTime()) : "—";
+    statsHost.innerHTML = `
+      <div class="backup-stat"><div class="backup-stat-num">${files.length}</div><div class="backup-stat-lbl">${L("backupListTitle")}</div></div>
+      <div class="backup-stat"><div class="backup-stat-num">${lastAgo}</div><div class="backup-stat-lbl">${L("backupNowBtn")}</div></div>
+      <div class="backup-stat"><div class="backup-stat-num">${fmtFileSize(totalBytes) || "0 B"}</div><div class="backup-stat-lbl">${L("backupTab")}</div></div>
+    `;
+  }
+
   async function loadList() {
-    listBody.textContent = L("loading");
+    listBody.innerHTML = `<div class="backup-empty">${L("loading")}</div>`;
     try {
       const res = await authedFetch("/backup/list");
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || res.statusText);
+      renderStats(body.files);
       listBody.innerHTML = "";
-      if (!body.files.length) { listBody.textContent = L("backupNone"); return; }
-      const table = el(`<div class="q-section-list"></div>`);
-      body.files.forEach((f) => {
-        const created = f.createdTime ? fmtDateTime(new Date(f.createdTime)) : "—";
+      if (!body.files.length) {
+        listBody.innerHTML = `<div class="backup-empty"><span class="backup-empty-icon">🗄️</span>${L("backupNone")}</div>`;
+        return;
+      }
+      const list = el(`<div class="backup-list"></div>`);
+      body.files.forEach((f, i) => {
+        const createdMs = f.createdTime ? new Date(f.createdTime).getTime() : null;
+        const created = createdMs ? fmtDateTime(new Date(createdMs)) : "—";
+        const isLatest = i === 0;
         const row = el(`
-          <div class="q-card">
-            <div class="q-head"><span class="tag mono">${created}</span> ${f.size ? `<span class="tag">${fmtFileSize(Number(f.size))}</span>` : ""}</div>
-            <div class="row-actions"></div>
+          <div class="backup-row ${isLatest ? "is-latest" : ""}">
+            <div class="backup-row-icon">💾</div>
+            <div class="backup-row-info">
+              <div class="backup-row-date">${created}</div>
+              <div class="backup-row-meta">
+                <span>${createdMs ? fmtAgo(createdMs) : "—"}</span>
+                ${f.size ? `<span class="tag mono">${fmtFileSize(Number(f.size))}</span>` : ""}
+                ${isLatest ? `<span class="status-badge graded">${L("newest")}</span>` : ""}
+              </div>
+            </div>
+            <div class="backup-row-actions"></div>
           </div>
         `);
-        const actions = row.querySelector(".row-actions");
-        const dlBtn = el(`<button type="button" class="link">${L("backupDownload")}</button>`);
+        const actions = row.querySelector(".backup-row-actions");
+        const dlBtn = makeChip("📥", L("backupDownload"));
         dlBtn.onclick = async () => {
           try {
             const res2 = await authedFetch(`/backup/download/${f.id}`);
@@ -2685,7 +2736,7 @@ function renderBackupTab() {
             setTimeout(() => URL.revokeObjectURL(url), 5000);
           } catch (err) { alert(err.message); }
         };
-        const restoreBtn = el(`<button type="button" class="link danger">${L("backupRestore")}</button>`);
+        const restoreBtn = makeChip("♻️", L("backupRestore"), "warn");
         restoreBtn.onclick = async () => {
           if (!confirm(L("backupRestoreConfirm", { date: created }))) return;
           if (!confirm(L("backupRestoreConfirm2"))) return;
@@ -2701,7 +2752,7 @@ function renderBackupTab() {
             restoreBtn.disabled = false;
           }
         };
-        const delBtn = el(`<button type="button" class="link danger">${L("backupDelete")}</button>`);
+        const delBtn = makeChip("🗑️", L("backupDelete"), "danger");
         delBtn.onclick = async () => {
           if (!confirm(L("backupDeleteConfirm", { date: created }))) return;
           delBtn.disabled = true;
@@ -2718,9 +2769,9 @@ function renderBackupTab() {
         actions.appendChild(dlBtn);
         actions.appendChild(restoreBtn);
         actions.appendChild(delBtn);
-        table.appendChild(row);
+        list.appendChild(row);
       });
-      listBody.appendChild(table);
+      listBody.appendChild(list);
     } catch (err) {
       listBody.innerHTML = `<p class="err">${L("error")}: ${err.message}</p>`;
     }
@@ -2728,7 +2779,11 @@ function renderBackupTab() {
 
   nowBtn.onclick = async () => {
     nowBtn.disabled = true;
-    nowMsg.textContent = L("loading");
+    const originalLabel = nowLabel.textContent;
+    nowLabel.textContent = L("loading");
+    nowBtn.insertBefore(el(`<span class="btn-spinner"></span>`), nowLabel);
+    nowMsg.textContent = "";
+    nowMsg.className = "";
     try {
       const res = await authedFetch("/backup/run", { method: "POST" });
       const body = await res.json().catch(() => ({}));
@@ -2740,23 +2795,38 @@ function renderBackupTab() {
       nowMsg.textContent = `${L("error")}: ${err.message}`;
       nowMsg.className = "err";
     }
+    nowBtn.querySelector(".btn-spinner")?.remove();
+    nowLabel.textContent = originalLabel;
     nowBtn.disabled = false;
   };
   loadList();
 
+  // ---- Restore-from-uploaded-file card, styled as a click-to-choose dropzone ----
   const uploadCard = el(`
     <div class="card">
       <h3>${L("backupRestoreFromFileTitle")}</h3>
       <p class="hint">${L("backupRestoreFromFileHint")}</p>
-      <label>${L("backupChooseFile")}<input type="file" id="backup-file-input" accept="application/json" /></label>
-      <button type="button" id="backup-upload-restore-btn" class="ghost" style="margin-top:8px" disabled>${L("backupRestoreUploadBtn")}</button>
-      <div id="backup-upload-msg" style="margin-top:8px"></div>
+      <label class="backup-dropzone" id="backup-dropzone">
+        <span class="backup-dropzone-icon">📤</span>
+        <div>${L("backupChooseFile")}</div>
+        <input type="file" id="backup-file-input" accept="application/json" />
+        <div class="backup-dropzone-filename" id="backup-file-name"></div>
+      </label>
+      <div class="backup-actions-row">
+        <button type="button" id="backup-upload-restore-btn" class="ghost" disabled>${L("backupRestoreUploadBtn")}</button>
+        <span id="backup-upload-msg"></span>
+      </div>
     </div>
   `);
   const fileInput = uploadCard.querySelector("#backup-file-input");
+  const fileNameLabel = uploadCard.querySelector("#backup-file-name");
   const uploadRestoreBtn = uploadCard.querySelector("#backup-upload-restore-btn");
   const uploadMsg = uploadCard.querySelector("#backup-upload-msg");
-  fileInput.onchange = () => { uploadRestoreBtn.disabled = !fileInput.files[0]; };
+  fileInput.onchange = () => {
+    const file = fileInput.files[0];
+    fileNameLabel.textContent = file ? file.name : "";
+    uploadRestoreBtn.disabled = !file;
+  };
   uploadRestoreBtn.onclick = async () => {
     const file = fileInput.files[0];
     if (!file) return;
@@ -2764,6 +2834,7 @@ function renderBackupTab() {
     if (!confirm(L("backupRestoreConfirm2"))) return;
     uploadRestoreBtn.disabled = true;
     uploadMsg.textContent = L("loading");
+    uploadMsg.className = "";
     try {
       const token = await state.user.getIdToken();
       const fd = new FormData();

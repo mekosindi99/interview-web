@@ -275,6 +275,7 @@ export const t = {
     backupDelete: "حذف",
     backupDeleteConfirm: "حذف هذه النسخة الاحتياطية (بتاريخ {date})؟ تُنقل لسلة مهملات Google Drive (تقدر تسترجعها خلال 30 يوم لو صار خطأ).",
     backupDeleteDone: "تم حذف النسخة.",
+    newest: "الأحدث",
     backupRestoreFromFileTitle: "استعادة من ملف على جهازك",
     backupRestoreFromFileHint: "لو نزّلت نسخة احتياطية من قبل وحافظت عليها بجهازك، ارفعها هون للاستعادة منها مباشرة (حتى لو Google Drive نفسه فاضي أو مو متاح).",
     backupChooseFile: "اختيار ملف النسخة الاحتياطية (.json)",
