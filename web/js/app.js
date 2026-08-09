@@ -2701,8 +2701,23 @@ function renderBackupTab() {
             restoreBtn.disabled = false;
           }
         };
+        const delBtn = el(`<button type="button" class="link danger">${L("backupDelete")}</button>`);
+        delBtn.onclick = async () => {
+          if (!confirm(L("backupDeleteConfirm", { date: created }))) return;
+          delBtn.disabled = true;
+          try {
+            const res2 = await authedFetch(`/backup/${f.id}`, { method: "DELETE" });
+            const body2 = await res2.json().catch(() => ({}));
+            if (!res2.ok) throw new Error(body2.error || res2.statusText);
+            row.remove();
+          } catch (err) {
+            alert(err.message);
+            delBtn.disabled = false;
+          }
+        };
         actions.appendChild(dlBtn);
         actions.appendChild(restoreBtn);
+        actions.appendChild(delBtn);
         table.appendChild(row);
       });
       listBody.appendChild(table);

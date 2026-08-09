@@ -1124,6 +1124,22 @@ app.get("/backup/download/:fileId", fileProxyLimiter, requireAdmin, async (req, 
   }
 });
 
+// Deletes one backup from Drive (trash, not a hard delete — same
+// deleteOrTrashFile every other delete route here uses, recoverable for
+// ~30 days from Drive's own trash). Kept in sync with Drive by design: the
+// list this button lives next to (/backup/list) reads straight from Drive
+// itself, not a separate index, so there's nothing else that could drift.
+app.delete("/backup/:fileId", requireAdmin, async (req, res) => {
+  try {
+    const { fileId } = req.params;
+    if (!isValidDriveFileId(fileId)) return res.status(400).json({ error: "invalid file id" });
+    const result = await deleteOrTrashFile(fileId);
+    res.json({ ok: result !== "failed", result });
+  } catch (err) {
+    sendServerError(res, err, { exposeDetail: true });
+  }
+});
+
 // Restores from a backup already sitting in Drive (one from the /backup/list
 // history). Deliberately admin-only and requires no request body beyond the
 // fileId — the confirmation UI lives entirely client-side (renderBackupTab).
