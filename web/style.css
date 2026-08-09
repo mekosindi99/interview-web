@@ -40,7 +40,14 @@
   --shadow-lg: 0 20px 48px -14px rgba(20, 22, 30, .22);
   --radius-sm: 8px;
   --radius-md: 12px;
-  --radius-lg: 16px;
+  --radius-lg: 20px;
+  --brand-gradient: linear-gradient(135deg, var(--primary), var(--me-highlight));
+  /* Frosted-glass surfaces (topbar/drawer header) blend --card toward
+     transparent — needs an *opaque* fallback for browsers without
+     backdrop-filter support, which .glass-surface's own declaration below
+     provides via @supports. */
+  --glass-bg: color-mix(in srgb, var(--card) 72%, transparent);
+  --glass-border: color-mix(in srgb, var(--card) 40%, transparent);
 
   font-family: "Cairo", "Segoe UI", Tahoma, "Noto Sans Arabic", "Noto Naskh Arabic", sans-serif;
 }
@@ -79,16 +86,47 @@ body {
   margin: 0;
   color: var(--text);
   min-height: 100vh;
-  /* Two very faint radial tints (brand pink + the "me" blue) fixed to the
-     viewport corners, over the flat --bg — a subtle sense of depth behind
-     every screen instead of one flat color, without ever competing with
-     actual content contrast. background-attachment:fixed keeps it from
-     visibly repeating/shifting as pages scroll. */
+  /* Three overlapping radial blobs (brand pink, "me" blue, and a soft
+     magenta echo) fixed to the viewport — a real sense of atmosphere behind
+     every screen instead of a flat fill, strong enough to actually notice
+     at a glance but still calm enough to never fight with text contrast.
+     background-attachment:fixed keeps it from visibly shifting as the page
+     scrolls; slow-drift is skipped deliberately (a moving background under
+     an exam timer/reading text is a distraction, not polish). */
   background:
-    radial-gradient(circle at 12% -8%, color-mix(in srgb, var(--primary) 10%, transparent), transparent 55%),
-    radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--me-highlight) 8%, transparent), transparent 50%),
+    radial-gradient(circle at 12% -10%, color-mix(in srgb, var(--primary) 24%, transparent), transparent 48%),
+    radial-gradient(circle at 105% 0%, color-mix(in srgb, var(--me-highlight) 20%, transparent), transparent 45%),
+    radial-gradient(circle at 50% 115%, color-mix(in srgb, var(--primary) 12%, transparent), transparent 55%),
     var(--bg);
   background-attachment: fixed;
+}
+
+/* ---- Frosted-glass chrome ----
+   Applied straight to the existing top-chrome selectors (topbar/lang-row/
+   admin bar/drawer) rather than a new class some markup would need to opt
+   into — every one of these already exists in app.js exactly where "the bar
+   pinned to the top of the screen" belongs. backdrop-filter needs an
+   explicit @supports fallback: without it, a browser that ignores
+   backdrop-filter would still get the semi-transparent --glass-bg with
+   nothing blurred behind it, which reads as "broken/see-through" rather
+   than "frosted". The fallback keeps the original opaque --card instead. */
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  .lang-row, .topbar, .admin-topbar, .admin-drawer, .material-topbar {
+    background: var(--glass-bg); border-color: var(--glass-border);
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+  }
+}
+
+/* Every .card fades/slides into place as it's added to the DOM — this app
+   re-renders by throwing away and rebuilding elements on state changes
+   (not patching them in place), so a fresh .card node appears constantly as
+   you navigate; this animation replaying each time is what makes the whole
+   UI feel alive rather than static, without needing any JS hook. */
+@keyframes card-in { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+.card { animation: card-in .4s cubic-bezier(.22, 1, .36, 1) both; }
+@media (prefers-reduced-motion: reduce) {
+  .card { animation: none; }
 }
 
 #app { max-width: 960px; margin: 0 auto; padding: 16px; overflow-x: hidden; }
@@ -119,8 +157,9 @@ img, canvas, svg, video, audio { max-width: 100%; }
 .topbar-timer-only { justify-content: center; }
 
 .card {
-  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-lg);
-  padding: 20px; margin-bottom: 16px; box-shadow: var(--shadow-sm);
+  background: var(--card); border: 1px solid color-mix(in srgb, var(--primary) 7%, var(--border));
+  border-radius: var(--radius-lg); padding: 20px; margin-bottom: 16px; box-shadow: var(--shadow-sm);
+  transition: box-shadow .2s ease, transform .2s ease;
 }
 .center-card { max-width: 420px; margin: 40px auto; text-align: center; }
 /* Result screen: credentials/status/score cards used to each set their own
@@ -178,7 +217,21 @@ img, canvas, svg, video, audio { max-width: 100%; }
   background: linear-gradient(90deg, var(--primary), var(--me-highlight));
 }
 .login-brand { margin-bottom: 22px; }
-.login-brand h1 { margin: 0 0 4px; }
+/* Gradient-filled text (brand pink → "me" blue) instead of a flat color —
+   reserved for this one hero moment (the first thing anyone sees) rather
+   than applied to every heading site-wide, which would fight with the
+   status-colored text (ok/bad/warn) used elsewhere for meaning. The plain
+   `color: var(--text)` fallback covers any browser without background-clip
+   support, so the heading is never invisible. */
+.login-brand h1 {
+  margin: 0 0 4px;
+  background: var(--brand-gradient); background-clip: text; -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent; color: transparent;
+  display: inline-block;
+}
+@supports not (background-clip: text) {
+  .login-brand h1 { background: none; color: var(--text); -webkit-text-fill-color: currentColor; }
+}
 .login-sub { margin: 0; color: var(--muted); font-size: 14px; }
 .login-form { text-align: start; }
 .login-form label { margin-bottom: 16px; font-weight: 600; color: var(--text); }
@@ -220,11 +273,34 @@ button {
 button:not(.link):hover { transform: translateY(-1px); box-shadow: var(--shadow-sm); }
 button:not(.link):active { transform: translateY(0) scale(.97); box-shadow: none; }
 button:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+/* Glossy diagonal shine that sweeps across on hover — done as a second
+   background-image layer (not a ::before pseudo-element) specifically so
+   it's guaranteed to paint *behind* the button's own content: most buttons
+   here are a bare text node with no wrapping span, and an absolutely
+   positioned pseudo-element with any z-index still paints above plain
+   in-flow text per normal stacking rules, which would have made the sweep
+   momentarily blank out the label instead of gliding under it. */
 button.primary {
-  background: linear-gradient(135deg, var(--primary), var(--primary-dark)); color: #fff;
-  box-shadow: var(--shadow-sm);
+  color: #fff; box-shadow: var(--shadow-sm);
+  background-repeat: no-repeat;
+  background-image:
+    linear-gradient(115deg, transparent 30%, rgba(255,255,255,.35) 50%, transparent 70%),
+    linear-gradient(135deg, var(--primary), var(--primary-dark));
+  background-size: 250% 100%, 100% 100%;
+  background-position: -120% 0, 0 0;
+  transition: background-position .5s ease, box-shadow .15s ease, transform .08s ease;
 }
-button.primary:hover { background: linear-gradient(135deg, var(--primary-dark), var(--primary)); box-shadow: var(--shadow-md); }
+button.primary:hover {
+  background-image:
+    linear-gradient(115deg, transparent 30%, rgba(255,255,255,.35) 50%, transparent 70%),
+    linear-gradient(135deg, var(--primary-dark), var(--primary));
+  background-position: 120% 0, 0 0;
+  box-shadow: var(--shadow-md);
+}
+@media (prefers-reduced-motion: reduce) {
+  button.primary { transition: box-shadow .15s ease, transform .08s ease; }
+  button.primary:hover { background-position: -120% 0, 0 0; }
+}
 button.ghost { background: var(--card); border: 1px solid var(--border); }
 button.ghost:hover { background: var(--surface); }
 button.link { background: none; padding: 4px 8px; text-decoration: underline; color: var(--primary); border-radius: var(--radius-sm); }
