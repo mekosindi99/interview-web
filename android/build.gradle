@@ -1,6 +1,0 @@
-// Top-level build file. Nothing project-specific here — plugin versions are
-// declared once and applied per-module (just :app) below.
-plugins {
-    id 'com.android.application' version '8.5.2' apply false
-    id 'org.jetbrains.kotlin.android' version '1.9.24' apply false
-}
