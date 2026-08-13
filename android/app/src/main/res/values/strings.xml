@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Interview</string>
+    <string name="site_url">https://interview.sonbola.shop</string>
+    <string name="no_internet_title">لا يوجد اتصال بالإنترنت</string>
+    <string name="no_internet_retry">إعادة المحاولة</string>
+    <string name="mic_permission_denied">صلاحية المايكروفون مطلوبة لتسجيل إجابات المحادثة</string>
+</resources>

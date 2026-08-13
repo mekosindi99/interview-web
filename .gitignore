@@ -7,3 +7,13 @@ info.txt
 # Firebase service account keys — full admin access, never commit.
 *firebase-adminsdk*.json
 serviceAccountKey.json
+
+# Android app (thin WebView wrapper around the site) — build output and
+# machine-specific SDK path, not the project source itself.
+android/local.properties
+android/.gradle/
+android/build/
+android/app/build/
+android/*.iml
+android/.idea/
+

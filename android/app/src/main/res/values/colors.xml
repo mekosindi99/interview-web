@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Matches the primary/bg CSS variables from web/style.css so the
+         splash/status bar/launcher icon don't clash with the site's own
+         brand color. -->
+    <color name="brand_primary">#B8305C</color>
+    <color name="brand_bg">#F5F6F8</color>
+</resources>
